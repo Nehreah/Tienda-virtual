@@ -9,8 +9,7 @@ import javax.crypto.spec.SecretKeySpec
  */
 object ShopifyHmacVerifier {
     fun verifyHmac(rawBodyBytes: ByteArray, hmacHeader: String?, sharedSecret: String): Boolean {
-        if (hmacHeader.isNull@BLANK_LINE_REPLACEMENT
-.isBlank()) return false
+        if (hmacHeader.isNullOrBlank()) return false
         try {
             val keySpec = SecretKeySpec(sharedSecret.toByteArray(Charsets.UTF_8), "HmacSHA256")
             val mac = Mac.getInstance("HmacSHA256")

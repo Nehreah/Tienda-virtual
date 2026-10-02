@@ -1,7 +1,7 @@
 package com.automata.adapters.shopify
 
 import com.automata.commerce.model.PublicProductDto
-import com.automata.commerce.ports.CatalogListingStatus
+import com.automata.commerce.ports.ChannelListingStatus
 import com.automata.commerce.ports.CatalogPublishingPort
 import com.automata.shared.PortResult
 import com.automata.shared.ProductKey
@@ -78,9 +78,9 @@ class ShopifyCatalogAdapter(
         return setStock(productKey, externalId, 0, 0L)
     }
 
-    override suspend fun getStatus(productKey: ProductKey, externalId: String?): PortResult<CatalogListingStatus> {
+    override suspend fun getStatus(productKey: ProductKey, externalId: String?): PortResult<ChannelListingStatus> {
         return PortResult.Ok(
-            CatalogListingStatus(
+            ChannelListingStatus(
                 productKey = productKey,
                 channel = channelName,
                 externalId = externalId,

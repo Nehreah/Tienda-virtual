@@ -1,8 +1,5 @@
 pluginManagement {
     repositories {
-        maven {
-            url = java.net.URI("file:///home/nehreah/.gradle/caches/modules-2/files-2.1/")
-        }
         mavenCentral()
         gradlePluginPortal()
     }
@@ -10,12 +7,6 @@ pluginManagement {
 
 dependencyResolutionManagement {
     repositories {
-        maven {
-            url = java.net.URI("file:///home/nehreah/.gradle/caches/modules-2/files-2.1/")
-        }
-        maven {
-            url = java.net.URI("file:///home/nehreah/.m2/repository/")
-        }
         mavenCentral()
     }
 }

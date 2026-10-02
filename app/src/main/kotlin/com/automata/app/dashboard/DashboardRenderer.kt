@@ -111,7 +111,7 @@ object DashboardRenderer {
                     <div class="bg-white rounded-xl shadow-sm border p-5">
                         <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Negociación L0-L4</p>
                         <h3 class="text-3xl font-extrabold text-indigo-600 mt-1">Protección PM</h3>
-                        <p class="text-xs text-indigo-600 mt-2">Invarianza $Precio &ge; L4 &ge; PM Activa</p>
+                        <p class="text-xs text-indigo-600 mt-2">Invarianza ${'$'}Precio &ge; L4 &ge; PM Activa</p>
                     </div>
                 </div>
 

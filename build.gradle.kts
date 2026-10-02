@@ -19,6 +19,7 @@ subprojects {
         val junitVersion = "5.10.1"
         "testImplementation"("org.junit.jupiter:junit-jupiter-api:$junitVersion")
         "testRuntimeOnly"("org.junit.jupiter:junit-jupiter-engine:$junitVersion")
+        "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     }
 
     tasks.withType<Test> {

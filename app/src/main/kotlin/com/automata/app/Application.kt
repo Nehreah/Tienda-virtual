@@ -159,8 +159,9 @@ fun Application.module() {
             val parsedIntent = llmAdapter.parseIntent(message, AppStore.products.keys.map { ProductKey(it) })
             val product = AppStore.products.values.firstOrNull() ?: AppStore.products.values.first()
 
-            val responseHtml = if (parsedIntent.intentType == CustomerIntentType.MAKE_OFFER && parsedIntent.offeredPrice != null) {
-                val decision = negotiationEngine.evaluateOffer(product, parsedIntent.offeredPrice)
+            val offeredPrice = parsedIntent.offeredPrice
+            val responseHtml = if (parsedIntent.intentType == CustomerIntentType.MAKE_OFFER && offeredPrice != null) {
+                val decision = negotiationEngine.evaluateOffer(product, offeredPrice)
                 val badgeColor = if (decision.accepted) "bg-emerald-100 text-emerald-800" else "bg-amber-100 text-amber-800"
 
                 """

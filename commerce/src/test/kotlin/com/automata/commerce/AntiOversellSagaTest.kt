@@ -1,7 +1,7 @@
 package com.automata.commerce
 
 import com.automata.commerce.model.PublicProductDto
-import com.automata.commerce.ports.CatalogListingStatus
+import com.automata.commerce.ports.ChannelListingStatus
 import com.automata.commerce.ports.CatalogPublishingPort
 import com.automata.commerce.service.AntiOversellSaga
 import com.automata.shared.PortResult
@@ -26,7 +26,7 @@ class AntiOversellSagaTest {
         }
 
         override suspend fun unpublishProduct(productKey: ProductKey, externalId: String): PortResult<Unit> = PortResult.Ok(Unit)
-        override suspend fun getStatus(productKey: ProductKey, externalId: String?): PortResult<CatalogListingStatus> = PortResult.Ok(CatalogListingStatus(productKey, channelName, externalId, true, 0, "OK"))
+        override suspend fun getStatus(productKey: ProductKey, externalId: String?): PortResult<ChannelListingStatus> = PortResult.Ok(ChannelListingStatus(productKey, channelName, externalId, true, 0, "OK"))
     }
 
     @Test
