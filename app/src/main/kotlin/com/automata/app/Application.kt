@@ -226,7 +226,7 @@ fun Application.module() {
         post("/webhooks/shopify") {
             val topic = call.request.headers["X-Shopify-Topic"]
             val hmac = call.request.headers["X-Shopify-Hmac-SHA256"]
-            val bodyBytes = call.receiveChannel().toByteArray()
+            val bodyBytes = call.receive<ByteArray>()
 
             val result = shopifyWebhookHandler.handleWebhook(topic, hmac, bodyBytes)
 
@@ -300,10 +300,3 @@ fun Application.module() {
     }
 }
 
-private suspend fun io.ktor.utils.io.ByteReadChannel.toByteArray(): ByteArray {
-    val list = mutableListOf<Byte>()
-    while (!isClosedForRead) {
-        list.add(readByte())
-    }
-    return list.toByteArray()
-}
