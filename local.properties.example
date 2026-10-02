@@ -1,0 +1,29 @@
+# Plantilla de configuración local para el Autómata Comercial Multicanal v5.3
+# Copia este archivo a 'local.properties' y asigna tus credenciales reales.
+# NUNCA subas 'local.properties' al repositorio.
+
+PORT=8080
+DATABASE_URL=jdbc:h2:mem:automata_db;DB_CLOSE_DELAY=-1
+DATABASE_USER=sa
+DATABASE_PASSWORD=
+
+# Shopify GraphQL Admin API & Webhooks
+SHOPIFY_SHOP_DOMAIN=tu-tienda.myshopify.com
+SHOPIFY_ACCESS_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxxxxxx
+SHOPIFY_WEBHOOK_SECRET=shpss_xxxxxxxxxxxxxxxxxxxxxxx
+
+# Meta Commerce Catalog API
+META_CATALOG_ID=meta_cat_123456
+META_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
+META_COUNTRY_CODE=CO
+META_WEBHOOK_VERIFY_TOKEN=verify_token_secret_123
+
+# WhatsApp Business Cloud API
+WHATSAPP_PHONE_NUMBER_ID=1001234567890
+WHATSAPP_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
+
+# Instagram DM & Facebook Messenger API
+META_PAGE_ID=page_1234567890
+
+# Google Gemini LLM API Key
+GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxx
