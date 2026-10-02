@@ -35,4 +35,4 @@ if [ ! -f "$GRADLE_BIN" ] && [ -f "/home/nehreah/.gradle/wrapper/dists/gradle-9.
 fi
 
 echo -e "${GREEN}[+] Iniciando servidor Ktor Netty...${RESET}"
-exec $GRADLE_BIN run --offline
+exec $GRADLE_BIN :app:run

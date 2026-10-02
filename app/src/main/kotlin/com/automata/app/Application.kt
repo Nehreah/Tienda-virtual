@@ -6,7 +6,7 @@ import com.automata.adapters.channels.WhatsAppMessagingAdapter
 import com.automata.adapters.meta.MetaShopAdapter
 import com.automata.adapters.shopify.ShopifyCatalogAdapter
 import com.automata.adapters.shopify.ShopifyWebhookHandler
-import com.automata.app.dashboard.DashboardRenderer
+import com.automata.app.dashboard.*
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.ChannelListingStatus
@@ -35,6 +35,8 @@ object AppStore {
     val products = mutableMapOf<String, CommercialProduct>()
     val inventory = mutableMapOf<String, OperationalInventory>()
     val channelMappings = mutableMapOf<String, MutableMap<String, String>>()
+    val apiIntegrations = mutableListOf<ApiIntegrationStatus>()
+    val chatDeals = mutableListOf<ChatDealLog>()
 
     fun seedSampleData() {
         val p1 = CommercialProduct(
@@ -74,6 +76,30 @@ object AppStore {
 
         channelMappings[p1.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654321", "meta_catalogo" to "meta_PROD-001")
         channelMappings[p2.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654322", "meta_catalogo" to "meta_PROD-002")
+
+        apiIntegrations.clear()
+        apiIntegrations.addAll(
+            listOf(
+                ApiIntegrationStatus("Shopify GraphQL API", "E-Commerce", ApiStatus.FUNCIONAL, "Webhooks HMAC Activos • GraphQL Admin API v2024-01", "Hace 1 min"),
+                ApiIntegrationStatus("Meta Catalog API", "Catálogo", ApiStatus.FUNCIONAL, "Catalog ID: 109823749 • Modo: CATALOG_ONLY (Colombia)", "Hace 3 min"),
+                ApiIntegrationStatus("WhatsApp Cloud API", "Mensajería", ApiStatus.FUNCIONAL, "Phone Number ID: 104928374 • Verify Token Ok", "Hace 2 min"),
+                ApiIntegrationStatus("Instagram DM API", "Mensajería", ApiStatus.FUNCIONAL, "Instagram Account ID: 178414000 • Messaging API Activa", "Hace 5 min"),
+                ApiIntegrationStatus("Facebook Messenger API", "Mensajería", ApiStatus.FUNCIONAL, "Page ID: 1009283741 • Graph API v18.0 Webhooks", "Hace 4 min"),
+                ApiIntegrationStatus("Gemini LLM Engine", "IA & NLP", ApiStatus.FUNCIONAL, "Parsing de Intenciones L0-L4 • gemini-1.5-flash", "Hace 1 min"),
+                ApiIntegrationStatus("Base de Datos Operacional", "Almacenamiento", ApiStatus.FUNCIONAL, "Stock Maestro & Reservas Activas • Invarianza Protegida", "Hace 30 s")
+            )
+        )
+
+        chatDeals.clear()
+        chatDeals.addAll(
+            listOf(
+                ChatDealLog("CHAT-501", "+57 300 892 4110", "whatsapp", "WhatsApp", "Audífonos Bluetooth Pro ANC", "$110.000 COP", DealState.TRATO_CERRADO, "Trato Realizado (L3)", "Hace 5 min"),
+                ChatDealLog("CHAT-502", "@carlos_tech", "instagram", "Instagram DM", "Reloj Inteligente Sport GPS", "$230.000 COP", DealState.PENDIENTE_ENVIO, "Pendiente de Envío", "Hace 12 min"),
+                ChatDealLog("CHAT-503", "Orden Shopify #1084", "shopify_webhooks", "Shopify Order", "Audífonos Bluetooth Pro ANC", "$120.000 COP", DealState.PENDIENTE_ENVIO, "Pendiente de Envío", "Hace 25 min"),
+                ChatDealLog("CHAT-504", "Laura Gómez", "messenger", "Messenger", "Audífonos Bluetooth Pro ANC", "$60.000 COP", DealState.CANCELADO, "Cancelado / Rechazado (< PM)", "Hace 40 min"),
+                ChatDealLog("CHAT-505", "+57 315 776 2201", "whatsapp", "WhatsApp", "Reloj Inteligente Sport GPS", "$220.000 COP", DealState.EN_NEGOCIACION, "En Negociación (L2)", "Hace 2 min")
+            )
+        )
     }
 }
 
@@ -142,7 +168,13 @@ fun Application.module() {
                 statuses.add(ChannelListingStatus(p.key, "meta_catalogo", metaExt, metaExt != null, 12, "CATALOG_ONLY"))
             }
 
-            val html = DashboardRenderer.renderDashboardPage(productList, AppStore.inventory, statuses)
+            val html = DashboardRenderer.renderDashboardPage(
+                products = productList,
+                inventoryMap = AppStore.inventory,
+                channelStatuses = statuses,
+                apiIntegrations = AppStore.apiIntegrations,
+                chatDeals = AppStore.chatDeals
+            )
             call.respondText(html, ContentType.Text.Html)
         }
 
@@ -160,9 +192,19 @@ fun Application.module() {
             val product = AppStore.products.values.firstOrNull() ?: AppStore.products.values.first()
 
             val offeredPrice = parsedIntent.offeredPrice
+            var dealState = DealState.EN_NEGOCIACION
+            var dealLabel = "En Consulta / Negociación"
+
             val responseHtml = if (parsedIntent.intentType == CustomerIntentType.MAKE_OFFER && offeredPrice != null) {
                 val decision = negotiationEngine.evaluateOffer(product, offeredPrice)
                 val badgeColor = if (decision.accepted) "bg-emerald-100 text-emerald-800" else "bg-amber-100 text-amber-800"
+                if (decision.accepted) {
+                    dealState = DealState.TRATO_CERRADO
+                    dealLabel = "Trato Realizado (${decision.level.name})"
+                } else {
+                    dealState = DealState.CANCELADO
+                    dealLabel = "Cancelado / Rechazado (< PM)"
+                }
 
                 """
                 <div class="space-y-2">
@@ -182,6 +224,22 @@ fun Application.module() {
                 </div>
                 """.trimIndent()
             }
+
+            // Registrar dinámicamente en el log de chats del Dashboard
+            AppStore.chatDeals.add(
+                0,
+                ChatDealLog(
+                    id = "SIM-${(System.currentTimeMillis() % 10000)}",
+                    customer = "Cliente Simulador",
+                    channel = "simulator",
+                    channelDisplayName = "Simulador",
+                    productName = product.itemName,
+                    offeredPrice = offeredPrice?.formatFormattedCop() ?: product.publishedPrice.formatFormattedCop(),
+                    dealState = dealState,
+                    dealStateLabel = dealLabel,
+                    timestamp = "Ahora mismo"
+                )
+            )
 
             call.respondText(responseHtml, ContentType.Text.Html)
         }
@@ -300,4 +358,3 @@ fun Application.module() {
         }
     }
 }
-
