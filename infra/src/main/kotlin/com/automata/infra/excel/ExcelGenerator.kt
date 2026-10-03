@@ -26,16 +26,16 @@ object ExcelGenerator {
             val row = invSheet.createRow(rIdx + 1)
             val ppStr = item.precioPublicado?.formatFormattedCop() ?: ""
             val pmStr = item.precioMinimo?.formatFormattedCop() ?: ""
-            val costoStr = item.costoCompraReparacion.formatFormattedCop()
+            val costoStr = item.costoTotal.formatFormattedCop()
 
             val ganancia = if (item.estaVendido && item.vendidoEn != null) {
-                FinancialMath.gananciaNeta(item.vendidoEn!!, item.costoCompraReparacion)
+                FinancialMath.gananciaNeta(item.vendidoEn!!, item.costoTotal)
             } else if (item.precioPublicado != null) {
-                FinancialMath.gananciaNeta(item.precioPublicado!!, item.costoCompraReparacion)
+                FinancialMath.gananciaNeta(item.precioPublicado!!, item.costoTotal)
             } else null
 
             val gananciaStr = ganancia?.format() ?: ""
-            val roi = ganancia?.let { FinancialMath.roi(it, item.costoCompraReparacion) }
+            val roi = ganancia?.let { FinancialMath.roi(it, item.costoTotal) }
             val roiStr = roi?.let { "%.1f%%".format(it * 100) } ?: ""
 
             row.createCell(0).setCellValue(item.key.value)
@@ -89,7 +89,7 @@ object ExcelGenerator {
                     precioPublicado = com.automata.shared.Money.of(120000),
                     precioMinimo = com.automata.shared.Money.of(95000),
                     precioCompra = com.automata.shared.Money.of(70000),
-                    costoCompraReparacion = com.automata.shared.Money.of(70000),
+                    costoTotal = com.automata.shared.Money.of(70000),
                     estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
                     descripcion = "Audífonos inalámbricos con cancelación activa de ruido."
                 ),
@@ -99,7 +99,7 @@ object ExcelGenerator {
                     precioPublicado = com.automata.shared.Money.of(250000),
                     precioMinimo = com.automata.shared.Money.of(210000),
                     precioCompra = com.automata.shared.Money.of(150000),
-                    costoCompraReparacion = com.automata.shared.Money.of(150000),
+                    costoTotal = com.automata.shared.Money.of(150000),
                     estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
                     descripcion = "Smartwatch con monitor cardíaco y resistencia 5 ATM."
                 )

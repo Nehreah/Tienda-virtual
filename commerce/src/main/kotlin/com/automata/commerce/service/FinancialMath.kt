@@ -1,6 +1,7 @@
 package com.automata.commerce.service
 
-import com.automata.commerce.model.Inversion
+import com.automata.commerce.model.Periodo
+import com.automata.commerce.model.ReparteSocios
 import com.automata.shared.Money
 import com.automata.shared.SignedCop
 import java.math.BigDecimal
@@ -14,6 +15,29 @@ import java.time.temporal.ChronoUnit
  */
 object FinancialMath {
 
+    /** ROI mínimo por defecto sobre el COSTO TOTAL (tienda.config: roi_minimo_pct = 50). */
+    const val ROI_MINIMO_PCT_DEFECTO = 50
+
+    /**
+     * Precio mínimo = costo total × (1 + ROI mínimo), redondeado HACIA ARRIBA al peso.
+     * Se calcula sobre el costo TOTAL (compra + reparación), no solo sobre la compra: así el ROI real
+     * nunca queda por debajo del mínimo en artículos con reparación.
+     * Ej.: costo 20.000 -> 30.000 · costo 25.000 -> 37.500 · costo 333 -> 500.
+     * Es el espejo de tienda.fn_precio_minimo() en la base.
+     */
+    fun precioMinimo(costoTotal: Money, roiMinimoPct: Int = ROI_MINIMO_PCT_DEFECTO): Money {
+        require(roiMinimoPct >= 0) { "El ROI mínimo no puede ser negativo: $roiMinimoPct" }
+        val numerador = costoTotal.amountInCop * (100L + roiMinimoPct)
+        return Money.of((numerador + 99) / 100)   // división entera con redondeo hacia arriba (valores >= 0)
+    }
+
+    /** Periodo de venta según los días desde la compra: corto < 15, medio 15 a 29, largo 30 o más. */
+    fun periodo(dias: Int): Periodo = Periodo.desdeDias(dias.coerceAtLeast(0))
+
+    /** Días desde la PUBLICACIÓN hasta la venta (o hoy si sigue en stock). Vacío sin fecha de publicación. */
+    fun diasPublicado(publicacion: LocalDate?, venta: LocalDate?, hoy: LocalDate): Int? =
+        publicacion?.let { ChronoUnit.DAYS.between(it, venta ?: hoy).toInt().coerceAtLeast(0) }
+
     /** Ganancia neta = Vendido en − Costo (Compra + Reparación). Puede ser negativa. */
     fun gananciaNeta(vendidoEn: Money, costo: Money): SignedCop =
         SignedCop(vendidoEn.amountInCop - costo.amountInCop)
@@ -26,7 +50,7 @@ object FinancialMath {
     fun margen(ganancia: SignedCop, vendidoEn: Money): Double? =
         if (vendidoEn.amountInCop == 0L) null else ganancia.amount.toDouble() / vendidoEn.amountInCop
 
-    /** Días = (fecha de venta, o hoy si sigue en stock) − fecha de compra. Vacío sin fecha de compra. */
+    /** Días desde la COMPRA = (fecha de venta, o hoy si sigue en stock) − fecha de compra. Vacío sin fecha de compra. */
     fun dias(compra: LocalDate?, venta: LocalDate?, hoy: LocalDate): Int? =
         compra?.let { ChronoUnit.DAYS.between(it, venta ?: hoy).toInt().coerceAtLeast(0) }
 
@@ -69,6 +93,6 @@ object FinancialMath {
         return antonio to (valor - antonio)
     }
 
-    fun repartir(valor: Long, inversion: Inversion): Pair<Long, Long>? =
-        repartir(valor, inversion.pctAntonio, inversion.pctJavier)
+    fun repartir(valor: Long, reparte: ReparteSocios): Pair<Long, Long>? =
+        repartir(valor, reparte.pctAntonio, reparte.pctJavier)
 }

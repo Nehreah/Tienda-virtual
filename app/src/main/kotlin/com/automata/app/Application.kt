@@ -306,7 +306,7 @@ fun Application.module() {
                             precioPublicado = p.publishedPrice,
                             precioMinimo = p.minimumPrice,
                             precioCompra = p.cost,
-                            costoCompraReparacion = p.cost,
+                            costoTotal = p.cost,
                             descripcion = p.description,
                             fotos = p.images,
                             estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
@@ -336,7 +336,7 @@ fun Application.module() {
                     precioPublicado = p.publishedPrice,
                     precioMinimo = p.minimumPrice,
                     precioCompra = p.cost,
-                    costoCompraReparacion = p.cost,
+                    costoTotal = p.cost,
                     descripcion = p.description,
                     fotos = p.images,
                     estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO

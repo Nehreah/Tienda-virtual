@@ -8,8 +8,9 @@ import org.jetbrains.exposed.sql.javatime.timestamp
 import org.postgresql.util.PGobject
 
 /**
- * Tablas Exposed del esquema "tienda" (ver schema.sql).
+ * Tablas Exposed del esquema "tienda" (ver db/migracion_fase2.sql).
  * Las columnas que maneja la base (created_at, updated_at) no se declaran: la aplicación no las escribe.
+ * Las marcadas databaseGenerated() las calcula un trigger: la aplicación solo las lee.
  */
 
 /** jsonb leído como String (solo lectura; el historial lo escriben los triggers). */
@@ -26,48 +27,59 @@ fun Table.jsonbText(name: String): Column<String> = registerColumn<String>(name,
 object InventarioTable : Table("tienda.inventario") {
     val key = text("key")
     val item = text("item")
+    val tipo = text("tipo").nullable()                          // antes tienda.clasificacion.categoria
     val link = text("link").nullable()
-    val fotos = text("fotos")                       // URLs separadas por salto de línea
+    val fotos = text("fotos")                                   // URLs separadas por salto de línea
     val estado = text("estado")
     val fechaCompra = date("fecha_compra").nullable()
     val fechaPublicacion = date("fecha_publicacion").nullable()
     val fechaVenta = date("fecha_venta").nullable()
     val precioPublicado = long("precio_publicado").nullable()
-    val precioMinimo = long("precio_minimo").nullable()
+    val precioMinimo = long("precio_minimo").nullable().databaseGenerated()   // trigger: costo_total × 1,5 (hacia arriba)
     val precioCompra = long("precio_compra")
     val vendidoEn = long("vendido_en").nullable()
-    val costoCompraReparacion = long("costo_compra_reparacion").databaseGenerated()   // lo mantiene el trigger
+    val canalVenta = text("canal_venta").nullable()             // antes tienda.canal_venta
+    val requiereReparacion = bool("requiere_reparacion")
+    val pctAntonio = decimal("pct_antonio", 5, 2)               // antes tienda.inversion
+    val pctJavier = decimal("pct_javier", 5, 2)
+    val costoTotal = long("costo_total").databaseGenerated()    // antes costo_compra_reparacion; lo mantiene el trigger
     val descripcion = text("descripcion").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }
 
-object RevisionTable : Table("tienda.revision") {
+object ReparacionesTable : Table("tienda.reparaciones") {
     val key = text("key")
-    val reparacion = long("reparacion")
+    val precioReparacion = long("precio_reparacion")
     val detalles = text("detalles").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }
 
-object InversionTable : Table("tienda.inversion") {
+/** Solo lectura: la llena el trigger de Inventario. */
+object VentasTable : Table("tienda.ventas") {
     val key = text("key")
-    val pctAntonio = decimal("pct_antonio", 5, 2)
-    val pctJavier = decimal("pct_javier", 5, 2)
+    val fechaVenta = date("fecha_venta")
+    val vendidoEn = long("vendido_en")
+    val canal = text("canal").nullable()
+    val ingresos = long("ingresos")
+    val costoTotal = long("costo_total")
+    val gananciaNeta = long("ganancia_neta")
+    val margenPct = decimal("margen_pct", 7, 2).nullable()
+    val tiempoDias = integer("tiempo_dias").nullable()
+    val diasPublicado = integer("dias_publicado").nullable()
+    val periodo = text("periodo").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }
 
-object ClasificacionTable : Table("tienda.clasificacion") {
+/** Solo lectura: la llena el trigger de Inventario. */
+object MetricasTable : Table("tienda.metricas") {
     val key = text("key")
-    val categoria = text("categoria")
-
-    override val primaryKey = PrimaryKey(key)
-}
-
-object CanalVentaTable : Table("tienda.canal_venta") {
-    val key = text("key")
-    val canal = text("canal")
+    val ingresosAntonio = long("ingresos_antonio")
+    val gananciasAntonio = long("ganancias_antonio")
+    val ingresosJavier = long("ingresos_javier")
+    val gananciasJavier = long("ganancias_javier")
 
     override val primaryKey = PrimaryKey(key)
 }

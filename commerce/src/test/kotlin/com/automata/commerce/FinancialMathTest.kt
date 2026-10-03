@@ -1,9 +1,9 @@
 package com.automata.commerce
 
-import com.automata.commerce.model.Inversion
+import com.automata.commerce.model.Periodo
+import com.automata.commerce.model.ReparteSocios
 import com.automata.commerce.service.FinancialMath
 import com.automata.shared.Money
-import com.automata.shared.ProductKey
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 import java.math.BigDecimal
@@ -94,6 +94,63 @@ class FinancialMathTest {
     @Test
     fun `sin reparto definido devuelve vacio`() {
         assertNull(FinancialMath.repartir(300, BigDecimal.ZERO, BigDecimal.ZERO))
-        assertNull(FinancialMath.repartir(300, Inversion(ProductKey("A-1"))))
+        assertNull(FinancialMath.repartir(300, ReparteSocios.SIN_DEFINIR))
+    }
+
+    // ---------- Decisiones D1, D4 y D5 ----------
+
+    @Test
+    fun `D1 - precio minimo es costo total por 1,5 redondeado hacia arriba`() {
+        assertEquals(30_000L, FinancialMath.precioMinimo(Money.of(20_000)).amountInCop)   // sin reparación
+        assertEquals(37_500L, FinancialMath.precioMinimo(Money.of(25_000)).amountInCop)   // compra 20.000 + reparación 5.000
+        assertEquals(500L, FinancialMath.precioMinimo(Money.of(333)).amountInCop)         // 499,5 -> 500
+        assertEquals(0L, FinancialMath.precioMinimo(Money.ZERO).amountInCop)
+    }
+
+    @Test
+    fun `D1 - sobre el costo total el ROI real con reparacion nunca baja de 50 por ciento`() {
+        val costoTotal = Money.of(20_000) + Money.of(5_000)
+        val pm = FinancialMath.precioMinimo(costoTotal)
+        val roi = FinancialMath.roi(FinancialMath.gananciaNeta(pm, costoTotal), costoTotal)!!
+        assertTrue(roi >= 0.5)
+        // Si se calculara solo sobre la compra (20.000 × 1,5 = 30.000) el ROI real sería de solo 20 %:
+        val roiSoloCompra = FinancialMath.roi(FinancialMath.gananciaNeta(Money.of(30_000), costoTotal), costoTotal)!!
+        assertEquals(0.2, roiSoloCompra, 1e-9)
+    }
+
+    @Test
+    fun `D1 - el ROI minimo es configurable`() {
+        assertEquals(24_000L, FinancialMath.precioMinimo(Money.of(20_000), 20).amountInCop)
+        assertThrows(IllegalArgumentException::class.java) { FinancialMath.precioMinimo(Money.of(1), -1) }
+    }
+
+    @Test
+    fun `D5 - limites del periodo - 14 corto, 15 medio, 29 medio, 30 largo`() {
+        assertEquals(Periodo.CORTO, FinancialMath.periodo(0))
+        assertEquals(Periodo.CORTO, FinancialMath.periodo(14))
+        assertEquals(Periodo.MEDIO, FinancialMath.periodo(15))
+        assertEquals(Periodo.MEDIO, FinancialMath.periodo(29))
+        assertEquals(Periodo.LARGO, FinancialMath.periodo(30))
+        assertEquals(Periodo.LARGO, FinancialMath.periodo(400))
+        assertEquals(Periodo.CORTO, FinancialMath.periodo(-3))   // días negativos cuentan como 0
+    }
+
+    @Test
+    fun `D5 - etiquetas de periodo`() {
+        assertEquals(listOf("corto", "medio", "largo"), Periodo.entries.map { it.etiqueta })
+        assertEquals(Periodo.MEDIO, Periodo.desdeEtiqueta(" Medio "))
+        assertNull(Periodo.desdeEtiqueta("eterno"))
+    }
+
+    @Test
+    fun `D4 - dias desde la compra y dias desde la publicacion`() {
+        val compra = LocalDate.of(2026, 9, 1)
+        val publicacion = LocalDate.of(2026, 9, 6)
+        val venta = LocalDate.of(2026, 9, 21)
+        val hoy = LocalDate.of(2026, 10, 2)
+        assertEquals(20, FinancialMath.dias(compra, venta, hoy))                  // desde la compra
+        assertEquals(15, FinancialMath.diasPublicado(publicacion, venta, hoy))    // desde la publicación
+        assertNull(FinancialMath.diasPublicado(null, venta, hoy))                 // sin publicación: vacío
+        assertEquals(26, FinancialMath.diasPublicado(publicacion, null, hoy))     // sigue en stock: usa hoy
     }
 }
