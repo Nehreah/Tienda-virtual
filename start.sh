@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ==============================================================================
-# Script de Inicio Rápido - Autómata Comercial Multicanal v5.3
+# Script de Inicio Rápido - Tienda Virtual Multicanal, Semiautogestionada
 # ==============================================================================
 
 set -e
@@ -11,7 +11,7 @@ YELLOW='\033[1;33m'
 RESET='\033[0m'
 
 echo -e "${CYAN}===============================================================${RESET}"
-echo -e "${CYAN}   🚀 Autómata Comercial Multicanal v5.3 (Código Privado)${RESET}"
+echo -e "${CYAN}   🚀 Tienda Virtual Multicanal, Semiautogestionada (Código Privado)${RESET}"
 echo -e "${CYAN}===============================================================${RESET}"
 
 if [ ! -f "local.properties" ]; then

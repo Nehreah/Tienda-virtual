@@ -1,4 +1,4 @@
-# Diagrama de clases — Autómata Comercial Multicanal (v4)
+# Diagrama de clases — Tienda Virtual Multicanal, Semiautogestionada (v4)
 
 Lo **nuevo de esta entrega (v4)** está marcado con `<<NUEVO_v4>>`; lo modificado en v4 con `<<MODIFICADO_v4>>`.
 Lo que venía de v1–v3 aparece sin marca especial (las marcas `<<NUEVO_v2>>`/`<<NUEVO_v3>>` se conservan solo como referencia histórica).

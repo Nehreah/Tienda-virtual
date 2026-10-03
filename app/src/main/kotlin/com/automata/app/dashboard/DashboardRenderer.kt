@@ -138,7 +138,7 @@ object DashboardRenderer {
         <head>
             <meta charset="UTF-8">
             <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Autómata Comercial Multicanal v5.3</title>
+            <title>Tienda Virtual Multicanal, Semiautogestionada</title>
             <script src="https://cdn.tailwindcss.com"></script>
             <script src="https://unpkg.com/htmx.org@1.9.10"></script>
             <style>
@@ -159,7 +159,7 @@ object DashboardRenderer {
                     <div class="flex items-center space-x-3">
                         <div class="w-9 h-9 rounded-lg bg-violet-accent flex items-center justify-center font-bold text-white text-lg shadow">A</div>
                         <div>
-                            <h1 class="text-xl font-bold tracking-tight">Autómata Comercial Multicanal</h1>
+                            <h1 class="text-xl font-bold tracking-tight">Tienda Virtual Multicanal, Semiautogestionada</h1>
                             <p class="text-xs text-indigo-300">v5.3 • Matriz Comercial Excel & Engine de Negociación L0-L4</p>
                         </div>
                     </div>

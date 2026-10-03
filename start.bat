@@ -1,10 +1,10 @@
 @echo off
 REM ==============================================================================
-REM Script de Inicio Rápido para Windows - Autómata Comercial Multicanal v5.3
+REM Script de Inicio Rápido para Windows - Tienda Virtual Multicanal, Semiautogestionada
 REM ==============================================================================
 
 echo ===============================================================
-echo    Autómata Comercial Multicanal v5.3 (Código Privado)
+echo    Tienda Virtual Multicanal, Semiautogestionada (Código Privado)
 echo ===============================================================
 
 IF NOT EXIST local.properties (

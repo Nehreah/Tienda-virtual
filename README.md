@@ -1,4 +1,4 @@
-# Autómata Comercial Multicanal v5.3
+# Tienda Virtual Multicanal, Semiautogestionada
 
 > **Código Privado y Confidencial** — Arquitectura Hexagonal / Monolito Modular en Kotlin + Ktor + PostgreSQL + Shopify GraphQL API & Webhooks + Meta APIs (WhatsApp, Instagram, Messenger).
 
@@ -45,7 +45,7 @@ El script verificará la configuración, creará `local.properties` si no existe
 5. **Motor Comercial de Negociación (L0–L4)**:
    - Escalera de concesiones comerciales respetando con invarianza absoluta $Precio \ge L4 \ge PM$.
 
-6. **Dashboard Operacional Temprano**:
+6. **Dashboard Operacional**:
    - Interfaz web interactiva en HTMX / Ktor con previsualización del Excel, diff de cambios, estado de Shopify y Meta, y simulador de negociación en vivo.
 
 ---
@@ -53,7 +53,7 @@ El script verificará la configuración, creará `local.properties` si no existe
 ## 🛠️ Estructura del Proyecto (`Monolito Modular`)
 
 ```
-automata-comercial-multicanal/
+tienda-virtual-multicanal/
 ├── start.sh            # Script de inicio rápido en 1 clic para Linux/macOS
 ├── start.bat           # Script de inicio rápido en 1 clic para Windows
 ├── shared-kernel/      # Money (Long COP), ProductKey, PortResult, Eventos de Dominio

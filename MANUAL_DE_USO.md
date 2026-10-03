@@ -1,6 +1,6 @@
-# Manual de Uso: Autómata Comercial Multicanal v5.3
+# Manual de Uso: Tienda Virtual Multicanal, Semiautogestionada
 
-Bienvenido al **Manual de Uso del Autómata Comercial Multicanal (v5.3)**. Este documento explica cómo operar la plataforma, actualizar el catálogo mediante la Matriz Comercial en Excel, supervisar las operaciones en el Dashboard Web y utilizar la integración automatizada con **Shopify GraphQL Admin API** y **Meta Commerce Manager**.
+Bienvenido al **Manual de Uso del Tienda Virtual Multicanal, Semiautogestionada (v5.3)**. Este documento explica cómo operar la plataforma, actualizar el catálogo mediante la Matriz Comercial en Excel, supervisar las operaciones en el Dashboard Web y utilizar la integración automatizada con **Shopify GraphQL Admin API** y **Meta Commerce Manager**.
 
 ---
 
@@ -72,7 +72,7 @@ Ejecuta el servidor Ktor Netty en la terminal:
 ./gradlew run
 ```
 Verás el mensaje de confirmación:
-`Iniciando Autómata Comercial Multicanal v5.3 en http://localhost:8080`
+`Iniciando Tienda Virtual Multicanal, Semiautogestionada en http://localhost:8080`
 
 ### Paso 3: Abrir el Dashboard Web
 Abre tu navegador e ingresa a:

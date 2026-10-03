@@ -1,4 +1,4 @@
-# Manual de cambios v4 — Autómata Comercial Multicanal
+# Manual de cambios v4 — Tienda Virtual Multicanal, Semiautogestionada
 
 Continúa la entrega v3 (su manual quedó como `MANUAL_DE_CAMBIOS_v3.md`; los anteriores como `_v2` y `_v1`). Aquí solo se describe **lo nuevo de esta ronda**. Todo lo demás permanece igual.
 

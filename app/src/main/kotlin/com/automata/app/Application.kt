@@ -193,7 +193,7 @@ private fun recordDeal(outcome: PipelineOutcome) {
 /** Exige HTTP Basic si DASHBOARD_PASSWORD está definido. Devuelve false (ya respondió 401) cuando no hay acceso. */
 private suspend fun ApplicationCall.requireDashboardAuth(auth: DashboardAuth): Boolean {
     if (auth.isAuthorized(request.headers[HttpHeaders.Authorization])) return true
-    response.header(HttpHeaders.WWWAuthenticate, "Basic realm=\"Automata Comercial\", charset=\"UTF-8\"")
+    response.header(HttpHeaders.WWWAuthenticate, "Basic realm=\"Tienda Virtual Multicanal\", charset=\"UTF-8\"")
     respondText("Autenticación requerida", status = HttpStatusCode.Unauthorized)
     return false
 }
@@ -212,7 +212,7 @@ fun main() {
     AppStore.refreshIntegrationStatuses()
     val port = AppConfig.port
     println("===============================================================")
-    println("  Autómata Comercial Multicanal v5.3 (Código Privado)")
+    println("  Tienda Virtual Multicanal, Semiautogestionada (Código Privado)")
     println("  Servidor iniciado en http://localhost:$port")
     println("  Canales Activos: Shopify GraphQL, Meta Catalog, WhatsApp, IG, Messenger")
     println("===============================================================")
