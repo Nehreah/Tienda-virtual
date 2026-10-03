@@ -26,6 +26,14 @@ data class CommercialProduct(
     val images: List<String> = emptyList(),
     val masterQuantity: Int = 0 // Stock Maestro del Excel
 ) {
+    /**
+     * Fase 2.2: un producto con estado "Inactivo" (sin importar mayúsculas ni espacios) NO se vende:
+     * no entra al catálogo del bot, no se negocia ni se reserva, y no se publica en la vitrina ni en los canales.
+     * Cualquier otro valor (incluido vacío) se trata como activo.
+     */
+    val isActive: Boolean
+        get() = !status.trim().equals("inactivo", ignoreCase = true)
+
     /** Ganancia sobre el precio publicado. Con signo: si PP < costo es una pérdida (negativa), ya no se oculta. */
     val profit: SignedCop
         get() = SignedCop(publishedPrice.amountInCop - cost.amountInCop)

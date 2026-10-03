@@ -8,6 +8,24 @@ import java.io.OutputStream
 
 object ExcelGenerator {
 
+    /**
+     * Fase 4.8: protección contra inyección de fórmulas en Excel (CSV Injection).
+     * Si el valor comienza con un carácter que Excel interpreta como fórmula, se antepone un apóstrofe
+     * para que la celda se trate como texto literal en todos los procesadores de hojas de cálculo.
+     */
+    private fun sanitizeCell(value: String): String {
+        if (value.isEmpty()) return value
+        return when (value[0]) {
+            '=', '+', '-', '@', '\t', '\r' -> "'$value"
+            else -> value
+        }
+    }
+
+    @Suppress("UnusedPrivateMember")
+    private fun org.apache.poi.ss.usermodel.Cell.setStringSafe(value: String) {
+        setCellValue(sanitizeCell(value))
+    }
+
     fun generateWorkbookFromItems(items: List<InventarioItem>, outputStream: OutputStream) {
         val workbook = XSSFWorkbook()
 
@@ -36,20 +54,20 @@ object ExcelGenerator {
             val roi = ganancia?.let { FinancialMath.roi(it, item.costoTotal) }
             val roiStr = roi?.let { "%.1f%%".format(it * 100) } ?: ""
 
-            row.createCell(0).setCellValue(item.key.value)
-            row.createCell(1).setCellValue(item.item)
+            row.createCell(0).setCellValue(sanitizeCell(item.key.value))
+            row.createCell(1).setCellValue(sanitizeCell(item.item))
             row.createCell(2).setCellValue(ppStr)
             row.createCell(3).setCellValue(pmStr)
             row.createCell(4).setCellValue(costoStr)
             row.createCell(5).setCellValue(gananciaStr)
             row.createCell(6).setCellValue(roiStr)
-            row.createCell(7).setCellValue(item.estado.etiqueta)
-            row.createCell(8).setCellValue(item.link ?: "")
-            row.createCell(9).setCellValue(item.fotos.joinToString("\n"))
-            row.createCell(10).setCellValue(item.descripcion ?: "")
+            row.createCell(7).setCellValue(sanitizeCell(item.estado.etiqueta))
+            row.createCell(8).setCellValue(sanitizeCell(item.link ?: ""))
+            row.createCell(9).setCellValue(sanitizeCell(item.fotos.joinToString("\n")))
+            row.createCell(10).setCellValue(sanitizeCell(item.descripcion ?: ""))
             row.createCell(11).setCellValue(item.fechaCompra?.toString() ?: "")
             row.createCell(12).setCellValue(item.fechaVenta?.toString() ?: "")
-            row.createCell(13).setCellValue(item.vendidoEn?.formatFormattedCop() ?: "")
+            row.createCell(13).setCellValue(sanitizeCell(item.vendidoEn?.formatFormattedCop() ?: ""))
         }
 
         // 2. Hoja Config

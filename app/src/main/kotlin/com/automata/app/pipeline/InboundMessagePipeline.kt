@@ -26,7 +26,15 @@ import kotlin.time.Duration.Companion.minutes
 
 /** Acceso mínimo al catálogo e inventario que necesita el pipeline (en la app lo implementa AppStore). */
 interface PipelineCatalog {
+    /** Claves de los productos que se pueden vender (los Inactivos no aparecen: Fase 2.2). */
     fun productKeys(): List<ProductKey>
+
+    /**
+     * Todas las claves conocidas, activas o no. Solo sirve para que el intérprete reconozca el código de un producto
+     * retirado y el bot responda "no disponible" en vez de confundirlo con otro producto.
+     */
+    fun knownKeys(): List<ProductKey> = productKeys()
+
     fun product(key: ProductKey): CommercialProduct?
     fun inventory(key: ProductKey): OperationalInventory?
     fun saveInventory(inventory: OperationalInventory)
@@ -78,7 +86,7 @@ class InboundMessagePipeline(
         val trimmed = text.trim()
         // Fuera del candado: cuando el LLM sea una llamada HTTP no debe bloquear a los demás clientes.
         val intent: ParsedCustomerIntent? =
-            if (trimmed.isEmpty()) null else llm.parseIntent(trimmed, catalog.productKeys())
+            if (trimmed.isEmpty()) null else llm.parseIntent(trimmed, catalog.knownKeys())
 
         val outcome = lock.withLock { decide(channel, senderId, messageId, trimmed, intent, now) }
 
@@ -162,6 +170,12 @@ class InboundMessagePipeline(
             return answer(conv, now, askWhichProduct())
         }
 
+        // Fase 2.2: un producto Inactivo no se negocia ni se reserva. Se responde "no disponible" y se ofrecen los demás.
+        if (!product.isActive) {
+            val withoutInactive = if (conv.activeProductKey == product.key) conv.copy(activeProductKey = null) else conv
+            return answer(withoutInactive, now, "${soldOutText(product)} ${askWhichProduct()}", product)
+        }
+
         // Si cambió de producto, se libera la reserva del anterior y se olvidan las contraofertas (eran de otro producto).
         conv = releaseIfOtherProduct(conv, product.key)
         if (conv.activeProductKey != null && conv.activeProductKey != product.key) {
@@ -192,8 +206,21 @@ class InboundMessagePipeline(
                 // Solo cuenta si realmente hay una contraoferta pendiente; si no, "ok" es una consulta cualquiera.
                 // El precio sale de la conversación (lo fijó el servidor), NUNCA del texto del cliente.
                 val pending = conv.pendingCounterCop
-                if (pending == null) answer(conv, now, infoText(product, available), product, product.publishedPrice.amountInCop)
-                else handleOffer(conv, product, Money.of(pending), available, now)
+                val counterAge = conv.pendingCounterAt?.let { now - it }
+                // Fase 3.4: la contraoferta vence a los 30 minutos (evita aceptar precios obsoletos).
+                val counterExpired = counterAge != null && counterAge > 30.minutes
+                when {
+                    pending == null -> answer(conv, now, infoText(product, available), product, product.publishedPrice.amountInCop)
+                    counterExpired -> {
+                        // La contraoferta venció: se limpia y se responde con precios actualizados.
+                        val fresh = conv.copy(pendingCounterCop = null, pendingCounterAt = null)
+                        answer(fresh, now,
+                            "Lo sentimos, esa oferta ya expiró. El precio actual de ${product.itemName} es ${product.publishedPrice.formatFormattedCop()}. " +
+                            "Si quieres proponer un nuevo valor, escríbeme la cifra.",
+                            product, product.publishedPrice.amountInCop)
+                    }
+                    else -> handleOffer(conv, product, Money.of(pending), available, now)
+                }
             }
             CustomerIntentType.REQUEST_RESERVATION -> {
                 if (!available) answer(conv, now, soldOutText(product), product)
@@ -230,11 +257,15 @@ class InboundMessagePipeline(
         }
         // El motor decide (revalida contra el PM vigente). Cada rechazo por debajo del piso baja un escalón la contraoferta.
         val decision = engine.evaluateOffer(product, offered, conv.counterOfferCount)
-        if (!decision.accepted) {
+        if (!decision.accepted || decision.isEscalatedToHuman) {
+            if (decision.isEscalatedToHuman) {
+                return escalate(conv, now, decision.message, holdReservation = false)
+            }
             val negotiating = conv.copy(
                 state = ConversationState.NEGOTIATING,
                 counterOfferCount = (conv.counterOfferCount + 1).coerceAtMost(MAX_COUNTER_COUNT),
-                pendingCounterCop = decision.counterOffer?.amountInCop
+                pendingCounterCop = decision.counterOffer?.amountInCop,
+                pendingCounterAt  = now   // Fase 3.4: registra cuándo se emitió la contraoferta
             )
             return answer(negotiating, now, decision.message, product, offered.amountInCop)
         }
@@ -266,6 +297,7 @@ class InboundMessagePipeline(
     }
 
     private fun tryReserve(conv: Conversation, product: CommercialProduct, now: Instant): Reservation? {
+        if (!product.isActive) return null
         val inv = catalog.inventory(product.key) ?: return null
         if (!inv.isAvailable) return null
         catalog.saveInventory(inv.addReservation(1))

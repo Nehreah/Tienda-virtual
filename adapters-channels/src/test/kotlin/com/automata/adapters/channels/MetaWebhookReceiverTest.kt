@@ -151,4 +151,61 @@ class MetaWebhookReceiverTest {
         assertEquals(1, events.size)
         assertEquals("mid.real", events[0].messageId)
     }
+
+    // ---------- Fase 1.2: firma siempre obligatoria y token no vacío ----------
+
+    @Test
+    fun `authenticate accepts a valid signature`() {
+        val body = """{"object":"page","entry":[]}""".toByteArray()
+        assertEquals(
+            MetaWebhookReceiver.SignatureResult.VALID,
+            receiver.authenticate(body, sign(body, "app_secret"), "app_secret")
+        )
+    }
+
+    @Test
+    fun `authenticate without signature header is invalid`() {
+        val body = "{}".toByteArray()
+        assertEquals(MetaWebhookReceiver.SignatureResult.INVALID, receiver.authenticate(body, null, "app_secret"))
+        assertEquals(MetaWebhookReceiver.SignatureResult.INVALID, receiver.authenticate(body, "", "app_secret"))
+    }
+
+    @Test
+    fun `authenticate with a bad signature is invalid`() {
+        val body = "{}".toByteArray()
+        assertEquals(
+            MetaWebhookReceiver.SignatureResult.INVALID,
+            receiver.authenticate(body, sign(body, "otro_secret"), "app_secret")
+        )
+        assertEquals(
+            MetaWebhookReceiver.SignatureResult.INVALID,
+            receiver.authenticate("{\"x\":1}".toByteArray(), sign(body, "app_secret"), "app_secret")
+        )
+    }
+
+    @Test
+    fun `authenticate with an empty app secret reports the webhook as not configured even if a signature is sent`() {
+        val body = "{}".toByteArray()
+        assertEquals(MetaWebhookReceiver.SignatureResult.SECRET_NOT_CONFIGURED, receiver.authenticate(body, "sha256=cualquiercosa", ""))
+        assertEquals(MetaWebhookReceiver.SignatureResult.SECRET_NOT_CONFIGURED, receiver.authenticate(body, null, "   "))
+    }
+
+    @Test
+    fun `empty verify token on either side is rejected`() {
+        // Token configurado vacío y Meta envía token vacío: antes coincidían.
+        val unconfigured = MetaWebhookReceiver("")
+        assertNull(unconfigured.verifyWebhookChallenge("subscribe", "", "challenge"))
+        assertNull(unconfigured.verifyWebhookChallenge("subscribe", null, "challenge"))
+        assertNull(unconfigured.verifyWebhookChallenge("subscribe", "cualquiera", "challenge"))
+        // Token configurado y Meta envía vacío o nulo.
+        assertNull(receiver.verifyWebhookChallenge("subscribe", "", "challenge"))
+        assertNull(receiver.verifyWebhookChallenge("subscribe", null, "challenge"))
+        assertNull(receiver.verifyWebhookChallenge("subscribe", "   ", "challenge"))
+    }
+
+    @Test
+    fun `challenge requires subscribe mode`() {
+        assertNull(receiver.verifyWebhookChallenge("unsubscribe", verifyToken, "challenge"))
+        assertNull(receiver.verifyWebhookChallenge(null, verifyToken, "challenge"))
+    }
 }

@@ -19,11 +19,37 @@ class MetaWebhookReceiver(
         val timestamp: Long
     )
 
+    /** Resultado de autenticar un POST de Meta. Application lo traduce a 200 / 503 / 401. */
+    enum class SignatureResult {
+        VALID,
+        /** No hay META_APP_SECRET: el webhook está deshabilitado (HTTP 503). */
+        SECRET_NOT_CONFIGURED,
+        /** Falta la firma, está mal formada o no coincide (HTTP 401). */
+        INVALID
+    }
+
+    /**
+     * Verificación inicial de Meta (GET). Falla cerrado: un token vacío, de cualquiera de los dos lados,
+     * nunca se acepta (antes, token == "" coincidía con un verifyToken vacío).
+     */
     fun verifyWebhookChallenge(mode: String?, token: String?, challenge: String?): String? {
-        if (mode == "subscribe" && token == verifyToken) {
-            return challenge
-        }
-        return null
+        if (verifyToken.isBlank() || token.isNullOrBlank()) return null
+        if (mode != "subscribe") return null
+        val tokensMatch = java.security.MessageDigest.isEqual(
+            token.toByteArray(Charsets.UTF_8),
+            verifyToken.toByteArray(Charsets.UTF_8)
+        )
+        return if (tokensMatch) challenge else null
+    }
+
+    /**
+     * La firma de Meta es siempre obligatoria. Sin App Secret el webhook no funciona (503);
+     * con App Secret, toda petición sin X-Hub-Signature-256 válida se rechaza (401).
+     */
+    fun authenticate(rawBody: ByteArray, signatureHeader: String?, appSecret: String): SignatureResult = when {
+        appSecret.isBlank() -> SignatureResult.SECRET_NOT_CONFIGURED
+        verifySignature(rawBody, signatureHeader, appSecret) -> SignatureResult.VALID
+        else -> SignatureResult.INVALID
     }
 
     /**

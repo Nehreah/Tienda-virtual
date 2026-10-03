@@ -14,11 +14,16 @@ data class OperationalInventory(
     val unidadesVendidas: Int = 0,
     val version: Long = 1L
 ) {
+    /** Stock disponible real. Puede ser negativo si se vendió más de lo que había (alerta en tablero). */
     val stockVivo: Int
-        get() = (stockMaestro - reservasActivas - unidadesVendidas).coerceAtLeast(0)
+        get() = stockMaestro - reservasActivas - unidadesVendidas
 
     val isAvailable: Boolean
         get() = stockVivo > 0
+
+    /** Fase 2.6: stock negativo significa venta/reserva que excedió el maestro; el tablero debe alertarlo. */
+    val hasNegativeStock: Boolean
+        get() = stockVivo < 0
 
     fun withUpdatedMaster(newMasterStock: Int): OperationalInventory {
         return copy(

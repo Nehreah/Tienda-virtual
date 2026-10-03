@@ -18,7 +18,8 @@ import kotlinx.serialization.json.*
 class ShopifyCatalogAdapter(
     private val shopDomain: String,
     private val accessToken: String,
-    private val apiVersion: String = "2024-01",
+    private val apiVersion: String = "2024-10",
+    private val locationId: String = "gid://shopify/Location/1",
     private val httpClient: HttpClient = HttpClient()
 ) : CatalogPublishingPort {
 
@@ -64,7 +65,7 @@ class ShopifyCatalogAdapter(
     ): PortResult<Unit> {
         val query = ShopifyGraphQLPayloads.buildInventorySetQuantitiesMutation(
             inventoryItemId = externalId,
-            locationId = "gid://shopify/Location/12345678",
+            locationId = locationId,   // Fase 4.4: desde AppConfig.shopifyLocationId
             quantity = quantity
         )
         val response = sendGraphQLRequest(query)

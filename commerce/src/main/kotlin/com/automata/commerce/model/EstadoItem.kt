@@ -12,6 +12,7 @@ enum class EstadoItem(val etiqueta: String, val esFinal: Boolean = false) {
     PUBLICADO("Publicado"),
     NEGOCIACION("Negociación"),
     VENDIDO("Vendido", esFinal = true),
+    INACTIVO("Inactivo"),
     OTRO("Otro");
 
     companion object {

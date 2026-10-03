@@ -2,6 +2,53 @@ package com.automata.infra.config
 
 import java.io.File
 import java.util.Properties
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Entorno de ejecución (variable APP_ENV).
+ * - LOCAL (por defecto): desarrollo en tu propia máquina. El servidor escucha solo en 127.0.0.1.
+ * - PRODUCTION: servidor expuesto. Exige clave del tablero y escucha en todas las interfaces.
+ * Un valor desconocido (por ejemplo un error de tipeo como "prodution") NO se interpreta como local: la app no arranca.
+ */
+enum class AppEnv {
+    LOCAL, PRODUCTION;
+
+    companion object {
+        fun parse(raw: String?): AppEnv = when (raw?.trim()?.lowercase().orEmpty()) {
+            "", "local" -> LOCAL
+            "production" -> PRODUCTION
+            else -> throw IllegalStateException(
+                "APP_ENV='${raw?.trim()}' no es válido. Los valores permitidos son 'local' (por defecto) y 'production'."
+            )
+        }
+    }
+}
+
+/**
+ * Detecta valores de ejemplo copiados de local.properties.example (por ejemplo "verify_token_secret_123",
+ * "shpat_xxx..." o "change_me"). AppConfig los trata como si la variable estuviera vacía.
+ */
+object ConfigPlaceholders {
+    private val EXACT = setOf(
+        "change_me", "changeme", "cambiar_esta_clave", "cambiar_clave",
+        "verify_token_secret_123", "meta_cat_123456", "page_1234567890", "1001234567890",
+        "tu-tienda.myshopify.com", "postgres.id_del_proyecto"
+    )
+    private val PREFIXES = listOf("shpat_xxx", "shpss_xxx", "eaagxxx", "aizasyxxx")
+    private val FRAGMENTS = listOf("id_del_proyecto", "aws-0-region.", "tu-dominio.com", "3xx xxx xxxx")
+    // Cinco "x" seguidas no aparecen en un secreto real (hex o base62) en la práctica; en los ejemplos hay 20 o más.
+    private val RUN_OF_X = Regex("x{5,}", RegexOption.IGNORE_CASE)
+
+    fun isPlaceholder(value: String): Boolean {
+        val v = value.trim().lowercase()
+        if (v.isEmpty()) return false
+        return v in EXACT ||
+            (v.startsWith("<") && v.endsWith(">")) ||   // "<tu token aquí>"
+            PREFIXES.any { v.startsWith(it) } ||
+            FRAGMENTS.any { v.contains(it) } ||
+            RUN_OF_X.containsMatchIn(v)
+    }
+}
 
 /**
  * Carga segura de configuración y secretos.
@@ -21,15 +68,38 @@ object AppConfig {
         }
     }
 
-    fun get(key: String, defaultValue: String = ""): String {
+    private val warnedPlaceholders: MutableSet<String> = ConcurrentHashMap.newKeySet()
+
+    /** Valor tal cual está en el entorno o en local.properties ("" si no existe). La variable de entorno gana. */
+    private fun rawValue(key: String): String {
         val envVal = System.getenv(key)
         if (!envVal.isNullOrBlank()) return envVal
-
         val propVal = localProps.getProperty(key)
         if (!propVal.isNullOrBlank()) return propVal
-
-        return defaultValue
+        return ""
     }
+
+    fun get(key: String, defaultValue: String = ""): String {
+        val raw = rawValue(key)
+        if (raw.isBlank()) return defaultValue
+        if (ConfigPlaceholders.isPlaceholder(raw)) {
+            // Solo se escribe el NOMBRE de la variable, nunca su valor.
+            if (warnedPlaceholders.add(key)) {
+                System.err.println("ADVERTENCIA: $key contiene un valor de ejemplo (placeholder); se ignora y esa integración queda sin configurar.")
+            }
+            return defaultValue
+        }
+        return raw
+    }
+
+    /** true si la variable existe pero trae un valor de ejemplo sin reemplazar (el tablero lo explica así). */
+    fun hasPlaceholder(key: String): Boolean {
+        val raw = rawValue(key)
+        return raw.isNotBlank() && ConfigPlaceholders.isPlaceholder(raw)
+    }
+
+    /** Entorno de ejecución. Lanza IllegalStateException si APP_ENV tiene un valor desconocido. */
+    val appEnv: AppEnv get() = AppEnv.parse(get("APP_ENV"))
 
     val port: Int get() = get("PORT", "8080").toIntOrNull() ?: 8080
 
@@ -43,6 +113,8 @@ object AppConfig {
     val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN")
     val shopifyAccessToken: String get() = get("SHOPIFY_ACCESS_TOKEN")
     val shopifyWebhookSecret: String get() = get("SHOPIFY_WEBHOOK_SECRET")
+    /** Fase 4.4: ID de la ubicación de inventario en Shopify (se obtiene de la Admin API). */
+    val shopifyLocationId: String get() = get("SHOPIFY_LOCATION_ID", "gid://shopify/Location/1")
 
     // Meta Catalog & Shop Config
     val metaCatalogId: String get() = get("META_CATALOG_ID")
@@ -53,6 +125,7 @@ object AppConfig {
     // Versión de la Graph API de Meta (WhatsApp, Instagram, Messenger). Centralizada aquí para
     // poder actualizarla sin tocar los adaptadores. Verifica la vigente en developers.facebook.com/docs/graph-api/changelog
     // App Secret de la app de Meta: firma de los webhooks (X-Hub-Signature-256). Sin valor por defecto.
+    // Es OBLIGATORIO: sin él, POST /webhooks/meta responde 503 (ya no existe modo "sin firma").
     val metaAppSecret: String get() = get("META_APP_SECRET")
 
     val metaGraphApiVersion: String get() = get("META_GRAPH_API_VERSION", "v26.0")
@@ -67,16 +140,20 @@ object AppConfig {
     // Texto que el bot envía al cliente tras reservar (cómo pagar). Configúralo con tus datos reales.
     val paymentInstructions: String get() = get("PAYMENT_INSTRUCTIONS", "Un asesor te enviará los datos de pago en breve.")
 
-    // Acceso al tablero y a /api/*: HTTP Basic. Sin DASHBOARD_PASSWORD la protección queda desactivada (solo para uso local).
+    // Acceso al tablero y a /api/*: HTTP Basic.
+    // APP_ENV=production exige DASHBOARD_PASSWORD de 12+ caracteres (si no, la app no arranca).
+    // APP_ENV=local sin clave: el servidor escucha solo en 127.0.0.1. Ver docs/MANUAL_CLAVE_TABLERO.md.
     val dashboardUser: String get() = get("DASHBOARD_USER", "admin")
     val dashboardPassword: String get() = get("DASHBOARD_PASSWORD")
 
-    // Endurecimiento opcional (por defecto NO cambia nada del comportamiento actual).
-    // REQUIRE_META_SIGNATURE=true: /webhooks/meta rechaza todo si META_APP_SECRET está vacío.
-    val requireMetaSignature: Boolean get() = get("REQUIRE_META_SIGNATURE", "false").trim().equals("true", ignoreCase = true)
-
-    // CORS_ALLOWED_HOST=mi-dominio.com: solo ese origen puede llamar a la API desde un navegador (vacío = cualquiera, como hasta ahora).
+    // CORS_ALLOWED_HOST=mi-dominio.com: solo ese origen puede llamar a la API desde un navegador.
+    // Vacío = CORS NO se instala (solo mismo origen). El tablero no necesita CORS.
     val corsAllowedHost: String get() = get("CORS_ALLOWED_HOST")
+
+    // TRUST_PROXY=true: la app corre detrás de UN proxy inverso de confianza (nginx, Caddy...). Entonces la IP del cliente
+    // (límite de intentos) y el host (defensa CSRF) se leen de X-Forwarded-For / X-Forwarded-Host. Dejar en false si no hay proxy:
+    // con true y sin proxy, cualquiera podría falsear esas cabeceras.
+    val trustProxyHeaders: Boolean get() = get("TRUST_PROXY", "false").trim().equals("true", ignoreCase = true)
 
     // Google Gemini LLM API Key
     val geminiApiKey: String get() = get("GEMINI_API_KEY", "")

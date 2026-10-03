@@ -1,0 +1,43 @@
+package com.automata.commerce.ports
+
+import com.automata.commerce.model.InventarioItem
+import com.automata.shared.Money
+import com.automata.shared.ProductKey
+import java.time.LocalDate
+
+/**
+ * Puerto de persistencia de la tabla principal INVENTARIO.
+ * [usuario] y [origen] ("dashboard" | "shopify" | "import") quedan registrados en el historial.
+ */
+interface InventarioRepository {
+    fun findAll(): List<InventarioItem>
+    fun findByKey(key: ProductKey): InventarioItem?
+
+    /**
+     * Crea o actualiza la fila completa. Devuelve la fila tal como quedó en la base.
+     * No escribe costo_total ni precio_minimo (los calcula la base).
+     * Lanza IllegalStateException si el producto ya está Vendido y [item] no lo está
+     * (para reabrir una venta usa [anularVenta]).
+     */
+    fun upsert(item: InventarioItem, usuario: String?, origen: String): InventarioItem
+
+    /**
+     * Marca el producto como Vendido (estado + fecha de venta + "Vendido en" + canal) en UNA sola
+     * sentencia UPDATE; la base crea la venta y las métricas por socio. Devuelve null si la Key no existe.
+     * Lanza IllegalStateException si ya estaba vendido o no tiene reparto de socios (suma 100).
+     */
+    fun marcarVendido(
+        key: ProductKey,
+        vendidoEn: Money,
+        fecha: LocalDate,
+        canal: String?,
+        usuario: String?,
+        origen: String
+    ): InventarioItem?
+
+    /**
+     * Deshace una venta: vuelve el estado a Publicado; la base borra la venta y las métricas.
+     * Devuelve null si la Key no existe. Lanza IllegalStateException si no estaba vendido.
+     */
+    fun anularVenta(key: ProductKey, usuario: String?, origen: String): InventarioItem?
+}

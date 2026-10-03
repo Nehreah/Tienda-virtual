@@ -6,7 +6,9 @@ import com.automata.shared.ProductSoldEvent
 import kotlinx.serialization.json.*
 
 /**
- * Procesador de Webhooks entrantes de Shopify (`orders/create`, `inventory/update`).
+ * Procesador de Webhooks entrantes de Shopify (orders/create, orders/cancelled, inventory/update).
+ * Fase 2.5: procesa TODOS los line_items de un pedido, no solo el primero.
+ * Los eventos de cancelacion llevan quantity negativo (devolver stock).
  */
 class ShopifyWebhookHandler(
     private val webhookSecret: String
@@ -14,9 +16,11 @@ class ShopifyWebhookHandler(
     data class WebhookProcessResult(
         val success: Boolean,
         val eventType: String,
-        val emittedEvent: ProductSoldEvent? = null,
+        val emittedEvents: List<ProductSoldEvent> = emptyList(),
         val message: String
-    )
+    ) {
+        val emittedEvent: ProductSoldEvent? get() = emittedEvents.firstOrNull()
+    }
 
     fun handleWebhook(
         topicHeader: String?,
@@ -27,7 +31,7 @@ class ShopifyWebhookHandler(
             return WebhookProcessResult(
                 success = false,
                 eventType = topicHeader ?: "unknown",
-                message = "Firma HMAC inválida en Webhook de Shopify"
+                message = "Firma HMAC invalida en Webhook de Shopify"
             )
         }
 
@@ -39,7 +43,8 @@ class ShopifyWebhookHandler(
         }
 
         return when (topicHeader) {
-            "orders/create" -> processOrderCreated(json)
+            "orders/create"    -> processOrderCreated(json)
+            "orders/cancelled" -> processOrderCancelled(json)
             "inventory/update" -> processInventoryUpdated(json)
             else -> WebhookProcessResult(true, topicHeader ?: "unknown", message = "Topic no suscrito ignorado")
         }
@@ -50,29 +55,61 @@ class ShopifyWebhookHandler(
         val lineItems = json["line_items"]?.jsonArray
 
         if (lineItems.isNullOrEmpty()) {
-            return WebhookProcessResult(true, "orders/create", message = "Orden sin ítems")
+            return WebhookProcessResult(true, "orders/create", message = "Orden sin items")
         }
 
-        val firstItem = lineItems.first().jsonObject
-        val sku = firstItem["sku"]?.jsonPrimitive?.content ?: "UNKNOWN_SKU"
-        val qty = firstItem["quantity"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
-        val priceStr = firstItem["price"]?.jsonPrimitive?.content ?: "0"
-        val priceCop = (priceStr.toDoubleOrNull() ?: 0.0).toLong()
-
-        val soldEvent = ProductSoldEvent(
-            eventId = "shopify_order_$orderId",
-            orderId = orderId,
-            channel = "shopify",
-            productKey = ProductKey(sku),
-            quantity = qty,
-            soldPrice = Money.of(priceCop)
-        )
+        val events = lineItems.mapIndexedNotNull { idx, element ->
+            val item = element.jsonObject
+            val sku = item["sku"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+            val qty = item["quantity"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
+            val priceCop = (item["price"]?.jsonPrimitive?.content?.toDoubleOrNull() ?: 0.0).toLong()
+            ProductSoldEvent(
+                eventId    = "shopify_order_${orderId}_item_$idx",
+                orderId    = orderId,
+                channel    = "shopify",
+                productKey = ProductKey(sku),
+                quantity   = qty,
+                soldPrice  = Money.of(priceCop)
+            )
+        }
 
         return WebhookProcessResult(
-            success = true,
-            eventType = "orders/create",
-            emittedEvent = soldEvent,
-            message = "Orden de Shopify procesada para $sku x$qty"
+            success       = true,
+            eventType     = "orders/create",
+            emittedEvents = events,
+            message       = "Orden $orderId: ${events.size} producto(s) procesado(s)"
+        )
+    }
+
+    private fun processOrderCancelled(json: JsonObject): WebhookProcessResult {
+        val orderId = json["id"]?.jsonPrimitive?.content ?: "UNKNOWN_ORDER"
+        val lineItems = json["line_items"]?.jsonArray
+
+        if (lineItems.isNullOrEmpty()) {
+            return WebhookProcessResult(true, "orders/cancelled", message = "Cancelacion sin items")
+        }
+
+        val events = lineItems.mapIndexedNotNull { idx, element ->
+            val item = element.jsonObject
+            val sku = item["sku"]?.jsonPrimitive?.content?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+            val qty = item["quantity"]?.jsonPrimitive?.content?.toIntOrNull() ?: 1
+            ProductSoldEvent(
+                eventId    = "shopify_cancel_${orderId}_item_$idx",
+                orderId    = orderId,
+                channel    = "shopify",
+                productKey = ProductKey(sku),
+                quantity   = -qty,
+                soldPrice  = Money.of(0L)
+            )
+        }
+
+        return WebhookProcessResult(
+            success       = true,
+            eventType     = "orders/cancelled",
+            emittedEvents = events,
+            message       = "Cancelacion $orderId: ${events.size} producto(s) devuelto(s)"
         )
     }
 
@@ -80,9 +117,9 @@ class ShopifyWebhookHandler(
         val inventoryItemId = json["inventory_item_id"]?.jsonPrimitive?.content ?: "UNKNOWN"
         val available = json["available"]?.jsonPrimitive?.content?.toIntOrNull() ?: 0
         return WebhookProcessResult(
-            success = true,
+            success   = true,
             eventType = "inventory/update",
-            message = "Inventario de Shopify actualizado externamente a $available para ítem $inventoryItemId"
+            message   = "Inventario de Shopify actualizado externamente a $available para item $inventoryItemId"
         )
     }
 }

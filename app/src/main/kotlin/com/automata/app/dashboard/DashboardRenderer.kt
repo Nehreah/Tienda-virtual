@@ -41,7 +41,7 @@ object DashboardRenderer {
             """
             <tr class="hover:bg-gray-50 border-b transition text-sm">
                 <td class="px-4 py-3 font-mono font-semibold text-indigo-700">${escapeHtml(p.key.value)}</td>
-                <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(p.itemName)}</td>
+                <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(p.itemName)}${if (!p.isActive) " <span class='ml-2 px-2 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-700'>INACTIVO</span>" else ""}</td>
                 <td class="px-4 py-3 text-gray-600">${escapeHtml(p.brand)}</td>
                 <td class="px-4 py-3 text-right font-semibold text-gray-900">${p.publishedPrice.formatFormattedCop()}</td>
                 <td class="px-4 py-3 text-center">
@@ -50,15 +50,16 @@ object DashboardRenderer {
                     </span>
                 </td>
                 <td class="px-4 py-3 text-center">
-                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${if (stockVivo > 0) "bg-emerald-100 text-emerald-800" else "bg-rose-100 text-rose-800"}">
+                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${if (stockVivo > 0) "bg-emerald-100 text-emerald-800" else if (stockVivo < 0) "bg-red-200 text-red-900" else "bg-rose-100 text-rose-800"}">
                         $stockVivo vivo (${reservas} res)
                     </span>
+                    ${if (stockVivo < 0) "<span class='ml-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-200 text-red-800'>⚠ STOCK NEGATIVO</span>" else ""}
                 </td>
                 <td class="px-4 py-3 text-center text-xs">
-                    ${if (shopifyStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-green-100 text-green-800 font-semibold'>ACTIVO</span>" else "<span class='px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 font-semibold'>PENDIENTE</span>"}
+                    ${if (!p.isActive) "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-semibold'>NO SE PUBLICA</span>" else if (shopifyStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-green-100 text-green-800 font-semibold'>ACTIVO</span>" else "<span class='px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 font-semibold'>PENDIENTE</span>"}
                 </td>
                 <td class="px-4 py-3 text-center text-xs">
-                    ${if (metaStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-purple-100 text-purple-800 font-semibold'>CATALOG_ONLY</span>" else "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-700 font-semibold'>SIN SYNC</span>"}
+                    ${if (!p.isActive) "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-semibold'>NO SE PUBLICA</span>" else if (metaStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-purple-100 text-purple-800 font-semibold'>CATALOG_ONLY</span>" else "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-700 font-semibold'>SIN SYNC</span>"}
                 </td>
             </tr>
             """.trimIndent()
@@ -101,19 +102,31 @@ object DashboardRenderer {
         // Filas para la tabla de Chats y Tratos
         val chatDealRowsHtml = chatDeals.joinToString("\n") { chat ->
             val (badgeClass, badgeText) = when (chat.dealState) {
-                DealState.TRATO_CERRADO -> "bg-emerald-100 text-emerald-800 border-emerald-300" to "✓ ${escapeHtml(chat.dealStateLabel)}"
+                DealState.TRATO_CERRADO  -> "bg-emerald-100 text-emerald-800 border-emerald-300" to "✓ ${escapeHtml(chat.dealStateLabel)}"
                 DealState.PENDIENTE_ENVIO -> "bg-blue-100 text-blue-800 border-blue-300" to "📦 ${escapeHtml(chat.dealStateLabel)}"
                 DealState.EN_NEGOCIACION -> "bg-amber-100 text-amber-800 border-amber-300" to "⏳ ${escapeHtml(chat.dealStateLabel)}"
-                DealState.CANCELADO -> "bg-rose-100 text-rose-800 border-rose-300" to "✕ ${escapeHtml(chat.dealStateLabel)}"
+                DealState.CANCELADO      -> "bg-rose-100 text-rose-800 border-rose-300" to "✕ ${escapeHtml(chat.dealStateLabel)}"
             }
 
             val channelBadge = when (chat.channel.lowercase()) {
-                "whatsapp" -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200'>WhatsApp</span>"
-                "instagram" -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-pink-50 text-pink-700 border border-pink-200'>Instagram DM</span>"
-                "messenger" -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200'>Messenger</span>"
+                "whatsapp"        -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200'>WhatsApp</span>"
+                "instagram"       -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-pink-50 text-pink-700 border border-pink-200'>Instagram DM</span>"
+                "messenger"       -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200'>Messenger</span>"
                 "shopify_webhooks" -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-green-50 text-green-700 border border-green-200'>Shopify Order</span>"
-                else -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200'>Simulador</span>"
+                else              -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200'>Simulador</span>"
             }
+
+            // Fase 5.3: botón "Confirmar Pago" para tratos en espera de confirmación manual.
+            val confirmButton = if (chat.dealState == DealState.TRATO_CERRADO) {
+                """<form method="POST" action="/api/confirmar-pago" class="inline">
+                    <input type="hidden" name="dealId" value="${escapeHtml(chat.id)}">
+                    <button type="submit"
+                        class="px-2 py-1 text-xs font-semibold rounded bg-indigo-600 text-white hover:bg-indigo-700 transition"
+                        onclick="return confirm('¿Confirmar pago para ${escapeHtml(chat.customer)}?')">
+                        ✔ Confirmar Pago
+                    </button>
+                </form>"""
+            } else ""
 
             """
             <tr class="hover:bg-gray-50 border-b transition text-sm chat-row" data-channel="${escapeHtml(chat.channel)}">
@@ -126,6 +139,7 @@ object DashboardRenderer {
                     <span class="px-2.5 py-1 text-xs font-bold rounded-full border inline-block $badgeClass">
                         $badgeText
                     </span>
+                    $confirmButton
                 </td>
                 <td class="px-4 py-3 text-right text-xs text-gray-400">${escapeHtml(chat.timestamp)}</td>
             </tr>

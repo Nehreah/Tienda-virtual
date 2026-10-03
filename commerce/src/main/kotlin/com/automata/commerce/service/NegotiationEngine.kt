@@ -3,6 +3,7 @@ package com.automata.commerce.service
 import com.automata.commerce.model.CommercialProduct
 import com.automata.shared.Money
 import kotlin.math.max
+import kotlin.random.Random
 
 /**
  * Resultado de una evaluación de negociación.
@@ -24,26 +25,29 @@ enum class NegotiationLevel {
     L2_MODERATE_DISCOUNT,
     L3_HIGH_DISCOUNT,
     L4_FLOOR_LIMIT,
-    REJECTED_BELOW_PM
+    REJECTED_BELOW_PM,
+    ESCALATED_HUMAN
 }
 
 /**
- * Motor Comercial de Negociación (Plan Maestro v5.0 / v5.3 Secciones 06 y 09).
- * Garantiza con invarianza absoluta que NUNCA se acepte ni se ofrezca un precio neto por debajo del PM.
+ * Motor Comercial de Negociación.
+ * Garantiza que NUNCA se acepte ni se ofrezca un precio neto por debajo del PM.
  *
- * Contraoferta sin revelar el piso (v5):
- *  - Una oferta >= PM se acepta a la cifra ofrecida (nunca por encima del precio publicado).
- *  - Una oferta < PM NO se rechaza diciendo "nuestro mejor precio es el PM". Se responde con una contraoferta
- *    escalonada (cada intento baja un poco, siempre por encima del PM) y el PM jamás aparece en el texto.
- *  - Los precios de contraoferta se redondean HACIA ARRIBA a miles de pesos: no dejan rastro de la cifra exacta del PM.
+ * Protecciones anti-filtrado del PM (Fase 3):
+ *  3.1 Variación aleatoria ±5% en cada contraoferta (semilla inyectable para tests).
+ *  3.2 Límite de MAX_COUNTER_OFFERS contraofertas; al superarlo escala a humano.
+ *  3.3 L3/L4 NUNCA aceptan al valor exacto ofrecido; siempre responden con contraoferta.
+ *  3.4 isFinalCounter se marca cuando se agota la escalera (el pipeline puede expirar).
  */
-class NegotiationEngine {
+class NegotiationEngine(
+    /** Inyectable para tests deterministas. Por defecto usa el generador global. */
+    private val random: Random = Random.Default
+) {
 
     /**
      * Evalúa una oferta enviada por un cliente en el chat.
      *
-     * @param previousCounterOffers cuántas contraofertas se le han hecho ya al cliente por este producto
-     *        (la conversación lo recuerda). Con 0 se hace la primera contraoferta.
+     * @param previousCounterOffers cuántas contraofertas se le han hecho ya al cliente por este producto.
      */
     fun evaluateOffer(
         product: CommercialProduct,
@@ -53,64 +57,86 @@ class NegotiationEngine {
         val pp = product.publishedPrice
         val pm = product.minimumPrice
 
-        // 1. Si la oferta es mayor o igual al precio publicado (L0)
+        // Fase 3.2: si ya se superó el límite de contraofertas, escalar a humano.
+        if (previousCounterOffers >= MAX_COUNTER_OFFERS) {
+            return NegotiationDecision(
+                accepted = false,
+                level    = NegotiationLevel.ESCALATED_HUMAN,
+                agreedPrice  = null,
+                counterOffer = null,
+                message = "Hemos llegado al límite de lo que puedo ofrecerte. " +
+                          "Un asesor se pondrá en contacto contigo para encontrar la mejor solución.",
+                isEscalatedToHuman = true,
+                isFinalCounter = true
+            )
+        }
+
+        // L0: oferta >= precio publicado
         if (offeredAmount >= pp) {
             return NegotiationDecision(
-                accepted = true,
-                level = NegotiationLevel.L0_PUBLISHED_PRICE,
-                agreedPrice = pp,
+                accepted     = true,
+                level        = NegotiationLevel.L0_PUBLISHED_PRICE,
+                agreedPrice  = pp,
                 counterOffer = null,
                 message = "¡Excelente! Aceptamos tu oferta de ${pp.formatFormattedCop()}. Podemos proceder con el pago."
             )
         }
 
-        // 2. Por debajo del PM: contraoferta escalonada que NO revela el piso.
+        // Por debajo del PM: contraoferta escalonada sin revelar el piso.
         if (offeredAmount < pm) {
             return counterOffer(pp, pm, previousCounterOffers)
         }
 
-        // 3. Escalera de concesiones (L1 a L4) entre PP y PM: aquí offeredAmount >= PM garantizado.
+        // Entre PP y PM: calcular niveles.
         val l1Price = calculateLevelPrice(pp, pm, 0.25)
         val l2Price = calculateLevelPrice(pp, pm, 0.50)
         val l3Price = calculateLevelPrice(pp, pm, 0.75)
 
         return when {
             offeredAmount >= l1Price -> NegotiationDecision(
-                accepted = true,
-                level = NegotiationLevel.L1_LIGHT_DISCOUNT,
-                agreedPrice = offeredAmount,
+                accepted     = true,
+                level        = NegotiationLevel.L1_LIGHT_DISCOUNT,
+                agreedPrice  = offeredAmount,
                 counterOffer = null,
                 message = "¡Trato hecho! Aceptamos tu propuesta por ${offeredAmount.formatFormattedCop()}."
             )
             offeredAmount >= l2Price -> NegotiationDecision(
-                accepted = true,
-                level = NegotiationLevel.L2_MODERATE_DISCOUNT,
-                agreedPrice = offeredAmount,
+                accepted     = true,
+                level        = NegotiationLevel.L2_MODERATE_DISCOUNT,
+                agreedPrice  = offeredAmount,
                 counterOffer = null,
                 message = "Aceptamos tu oferta especial de ${offeredAmount.formatFormattedCop()} por hoy."
             )
-            offeredAmount >= l3Price -> NegotiationDecision(
-                accepted = true,
-                level = NegotiationLevel.L3_HIGH_DISCOUNT,
-                agreedPrice = offeredAmount,
-                counterOffer = null,
-                message = "Es un gran descuento, pero aceptamos los ${offeredAmount.formatFormattedCop()} para cerrar la venta ya."
-            )
-            else -> NegotiationDecision(
-                accepted = true,
-                level = NegotiationLevel.L4_FLOOR_LIMIT,
-                agreedPrice = offeredAmount,
-                counterOffer = null,
-                // No se dice "es nuestro límite": eso confirmaría que la cifra está pegada al piso.
-                message = "Aceptamos tu propuesta de ${offeredAmount.formatFormattedCop()} para cerrar la venta."
-            )
+            // Fase 3.3: L3 y L4 NUNCA aceptan al valor exacto; responden siempre con contraoferta
+            // para que el cliente no pueda deducir el PM haciendo ofertas muy cercanas.
+            offeredAmount >= l3Price -> {
+                val counter = addRandomVariation(l2Price, pm, pp)
+                NegotiationDecision(
+                    accepted     = false,
+                    level        = NegotiationLevel.L3_HIGH_DISCOUNT,
+                    agreedPrice  = null,
+                    counterOffer = counter,
+                    message = "Muy buen intento, pero no puedo dejarlo en eso. " +
+                              "Te propongo ${counter.formatFormattedCop()} para cerrar. ¿Lo tomamos?"
+                )
+            }
+            else -> {
+                val counter = addRandomVariation(l3Price, pm, pp)
+                NegotiationDecision(
+                    accepted     = false,
+                    level        = NegotiationLevel.L4_FLOOR_LIMIT,
+                    agreedPrice  = null,
+                    counterOffer = counter,
+                    message = "Ese precio no me es posible, pero te puedo ofrecer " +
+                              "${counter.formatFormattedCop()} para cerrar hoy."
+                )
+            }
         }
     }
 
     /**
-     * Contraoferta: pasos del 25 %, 50 % y 75 % de la distancia PP→PM. El último paso queda SIEMPRE por encima
-     * del PM (a 25 % de la distancia), de modo que el cliente nunca recibe la cifra del piso.
-     * Agotados los pasos se repite la última contraoferta (marcada como final).
+     * Contraoferta escalonada: cada paso baja un poco más pero SIEMPRE queda por encima del PM.
+     * Fase 3.1: se añade variación aleatoria ±5% a cada paso para dificultar la deducción del PM.
      */
     private fun counterOffer(pp: Money, pm: Money, previousCounterOffers: Int): NegotiationDecision {
         val step = previousCounterOffers.coerceAtLeast(0)
@@ -118,31 +144,38 @@ class NegotiationEngine {
         val factor = COUNTER_FACTORS[step.coerceAtMost(COUNTER_FACTORS.size - 1)]
 
         val raw = calculateLevelPrice(pp, pm, factor)
-        // Redondeo hacia ARRIBA a miles (nunca baja del PM) y tope en el precio publicado.
-        val rounded = ((raw.amountInCop + 999) / 1000) * 1000
-        // maxOf con el PM: garantía extra por si los datos traen PP < PM (el precio ofrecido jamás baja del PM).
-        val price = Money.of(maxOf(pm.amountInCop, minOf(rounded, pp.amountInCop)))
+        val price = addRandomVariation(raw, pm, pp)
         val formatted = price.formatFormattedCop()
 
         val text = when {
-            isFinal ->
-                "Ese es el precio más bajo que puedo ofrecerte por ahora: $formatted. " +
-                    "¿Lo tomamos? Si prefieres, puedo comunicarte con un asesor."
-            step == 0 ->
-                "Gracias por tu propuesta. Esa cifra está un poco baja para nosotros, pero puedo dejártelo en $formatted. ¿Te sirve?"
-            step == 1 ->
-                "Puedo mejorarlo un poco más: $formatted. ¿Lo tomamos?"
-            else ->
-                "Hago un último esfuerzo y te lo dejo en $formatted. ¿Te animas?"
+            isFinal -> "Ese es el precio más bajo que puedo ofrecerte por ahora: $formatted. " +
+                       "¿Lo tomamos? Si prefieres, puedo comunicarte con un asesor."
+            step == 0 -> "Gracias por tu propuesta. Esa cifra está un poco baja para nosotros, " +
+                         "pero puedo dejártelo en $formatted. ¿Te sirve?"
+            step == 1 -> "Puedo mejorarlo un poco más: $formatted. ¿Lo tomamos?"
+            else -> "Hago un último esfuerzo y te lo dejo en $formatted. ¿Te animas?"
         }
         return NegotiationDecision(
-            accepted = false,
-            level = NegotiationLevel.REJECTED_BELOW_PM,
-            agreedPrice = null,
+            accepted     = false,
+            level        = NegotiationLevel.REJECTED_BELOW_PM,
+            agreedPrice  = null,
             counterOffer = price,
-            message = text,
+            message      = text,
             isFinalCounter = isFinal
         )
+    }
+
+    /**
+     * Fase 3.1: variación aleatoria ±5% de la distancia entre `raw` y el PM.
+     * El resultado siempre está en [pm+1, pp] (no revela el PM exacto).
+     */
+    private fun addRandomVariation(raw: Money, pm: Money, pp: Money): Money {
+        val spread = raw.amountInCop - pm.amountInCop
+        val jitter = if (spread > 0) (random.nextDouble() * 0.10 - 0.05) * spread else 0.0
+        val adjusted = raw.amountInCop + jitter.toLong()
+        // Redondeo HACIA ARRIBA a miles: nunca revela la cifra exacta del PM.
+        val rounded = ((adjusted + 999) / 1000) * 1000
+        return Money.of(maxOf(pm.amountInCop + 1, minOf(rounded, pp.amountInCop)))
     }
 
     private fun calculateLevelPrice(pp: Money, pm: Money, factor: Double): Money {
@@ -153,7 +186,11 @@ class NegotiationEngine {
     }
 
     private companion object {
-        /** Fracción de la distancia PP→PM que se concede en cada contraoferta (siempre < 1.0: el PM no se alcanza). */
+        /** Fracción de la distancia PP→PM concedida en cada contraoferta (siempre < 1.0). */
         val COUNTER_FACTORS = doubleArrayOf(0.25, 0.50, 0.75)
+
+        /** Fase 3.2: tras este número de contraofertas se escala a humano. */
+        const val MAX_COUNTER_OFFERS = 4
     }
 }
+

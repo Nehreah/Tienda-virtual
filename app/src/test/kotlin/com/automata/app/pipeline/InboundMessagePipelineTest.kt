@@ -60,7 +60,9 @@ class InboundMessagePipelineTest {
         val llm = FakeLlm()
         val port = FakePort("whatsapp")
         val store = InMemoryConversationStore()
-        val pipeline = InboundMessagePipeline(llm, NegotiationEngine(), catalog, store, ChannelRouter(listOf(port)))
+        // Fase 3.1: seed fija para que los tests de negociación sean deterministas
+        val engine = NegotiationEngine(random = kotlin.random.Random(seed = 0L))
+        val pipeline = InboundMessagePipeline(llm, engine, catalog, store, ChannelRouter(listOf(port)))
     }
 
     private fun setup(stock: Int = 5, vararg products: CommercialProduct) =
@@ -227,10 +229,12 @@ class InboundMessagePipelineTest {
 
         val out = s.pipeline.handle("whatsapp", "573001", "m1", "te doy 50000", t0)
 
-        assertTrue(out.reply!!.contains("114.000"))
-        assertFalse(out.reply!!.contains("95.000"))
+        val counter = out.conversation.pendingCounterCop!!
+        // Invariante: contraoferta > PM (95.000) y ≤ PP (120.000); no revela el PM.
+        assertTrue(counter > 95_000L, "Contraoferta debe ser > PM")
+        assertTrue(counter <= 120_000L, "Contraoferta debe ser <= PP")
+        assertFalse(out.reply!!.contains("95.000"), "El mensaje no debe revelar el PM")
         assertEquals(ConversationState.NEGOTIATING, out.conversation.state)
-        assertEquals(114_000L, out.conversation.pendingCounterCop)
         assertEquals(1, out.conversation.counterOfferCount)
         assertEquals(0, s.catalog.inv[k1]!!.reservasActivas)
     }
@@ -240,13 +244,19 @@ class InboundMessagePipelineTest {
         val s = setup(5, product(k1, "Audífonos"))
         s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 50_000)
 
-        val replies = (1..5).map { i -> s.pipeline.handle("whatsapp", "573001", "m$i", "te doy 50000", t0 + i.minutes).reply!! }
+        // Pasos 1-4: hasta que MAX_COUNTER_OFFERS=4 aún tiene contraofertas (no escala todavía).
+        val results = (1..4).map { i ->
+            s.pipeline.handle("whatsapp", "573001", "m$i", "te doy 50000", t0 + i.minutes)
+        }
 
-        assertTrue(replies[0].contains("114.000"))
-        assertTrue(replies[1].contains("108.000"))
-        assertTrue(replies[2].contains("102.000"))
-        assertTrue(replies[3].contains("102.000"))
-        assertTrue(replies.none { it.contains("95.000") })
+        val counters = results.mapNotNull { it.conversation.pendingCounterCop }
+        assertTrue(counters.isNotEmpty(), "Debe haber al menos una contraoferta")
+        assertTrue(counters.all { it > 95_000L }, "Todas las contraofertas deben ser > PM")
+        assertTrue(counters.all { it <= 120_000L }, "Todas las contraofertas deben ser <= PP")
+
+        // Ninguna respuesta (mientras aún las hubo) revela el PM.
+        val replies = results.mapNotNull { it.reply }
+        assertTrue(replies.none { it.contains("95.000") }, "Ningún mensaje debe revelar el PM")
         assertEquals(0, s.catalog.inv[k1]!!.reservasActivas)
     }
 
@@ -254,13 +264,15 @@ class InboundMessagePipelineTest {
     fun `accepting the pending counter offer reserves at that price`() = runBlocking {
         val s = setup(5, product(k1, "Audífonos"))
         s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 50_000)
-        s.pipeline.handle("whatsapp", "573001", "m1", "te doy 50000", t0)
+        val firstOut = s.pipeline.handle("whatsapp", "573001", "m1", "te doy 50000", t0)
+        val pendingPrice = firstOut.conversation.pendingCounterCop!!
 
         s.llm.next = intent(CustomerIntentType.ACCEPT_COUNTER_OFFER)
         val out = s.pipeline.handle("whatsapp", "573001", "m2", "dale", t0 + 1.minutes)
 
         assertEquals(ConversationState.PAYMENT_PENDING, out.conversation.state)
-        assertEquals(114_000L, out.conversation.agreedPriceCop)
+        // El precio acordado debe coincidir con la contraoferta pendiente (nunca el precio del cliente).
+        assertEquals(pendingPrice, out.conversation.agreedPriceCop)
         assertNull(out.conversation.pendingCounterCop)
         assertEquals(0, out.conversation.counterOfferCount)
         assertEquals(1, s.catalog.inv[k1]!!.reservasActivas)

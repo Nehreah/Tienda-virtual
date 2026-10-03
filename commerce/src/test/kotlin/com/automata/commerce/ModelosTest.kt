@@ -133,7 +133,7 @@ class ModelosTest {
     @Test
     fun `estados reales y busqueda sin tildes`() {
         assertEquals(
-            listOf("Comprado", "Publicado", "Negociación", "Vendido", "Otro"),
+            listOf("Comprado", "Publicado", "Negociación", "Vendido", "Inactivo", "Otro"),
             EstadoItem.entries.map { it.etiqueta }
         )
         assertEquals(EstadoItem.NEGOCIACION, EstadoItem.desdeEtiqueta("negociacion"))

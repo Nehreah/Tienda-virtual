@@ -1,6 +1,7 @@
 package com.automata.infra.excel
 
 import com.automata.commerce.model.CommercialProduct
+import com.automata.commerce.model.EstadoItem
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import org.apache.poi.ss.usermodel.*
@@ -19,49 +20,108 @@ data class ExcelV2ImportResult(
     val products: List<CommercialProduct>,
     val channelOverrides: List<ChannelOverride>,
     val errors: List<String>,
-    val warnings: List<String>
+    val warnings: List<String>,
+    /** Filas de la hoja Inventario descartadas por tener errores (una fila con dos columnas malas cuenta una vez). */
+    val rejectedRows: Int = 0,
+    /**
+     * Fase 2.1: error que impide leer el archivo completo (dañado, sin hoja Inventario, sin columnas obligatorias,
+     * sin productos). Quien llama debe responder 400. Cuando existe, [products] está vacío.
+     */
+    val fileError: String? = null
 )
 
 /**
  * Lector y Validador de Excel v2 (Plan Maestro v5.3 Sección 07).
  * Procesa las 3 hojas: Inventario, Publicacion y Canales.
  * Sanitiza fórmulas celda por celda (= + - @) para prevenir injection attacks.
+ *
+ * Fase 2.1 (validación estricta de la hoja Inventario):
+ *  - PP > 0, PM > 0, PM <= PP y Costo >= 0. Los montos aceptan 120000, 120.000, 120,000, 120 000 y $120000 ([AmountParser]).
+ *  - "Consultar", vacíos, negativos y textos no numéricos NO se convierten en 0: la fila se rechaza.
+ *  - Cada error indica hoja, fila y columna. Las filas válidas se importan igual; las malas se listan en [ExcelV2ImportResult.errors].
+ *  - Clave duplicada: se conserva la primera fila y se rechaza la repetida.
+ *  - Archivo corrupto o sin lo mínimo: [ExcelV2ImportResult.fileError] (el llamador responde 400, nunca 500).
  */
 class ExcelV2Parser {
 
     fun parseExcel(inputStream: InputStream): ExcelV2ImportResult {
-        val workbook = WorkbookFactory.create(inputStream)
+        val workbook = try {
+            WorkbookFactory.create(inputStream)
+        } catch (e: Exception) {
+            System.err.println("ExcelV2Parser: archivo no legible (${e::class.simpleName})")
+            return fileFailure("El archivo no es un Excel (.xlsx) válido o está dañado.")
+        }
+        return try {
+            workbook.use { readWorkbook(it) }
+        } catch (e: Exception) {
+            System.err.println("ExcelV2Parser: error leyendo el contenido (${e::class.simpleName}: ${e.message})")
+            fileFailure("No se pudo leer el contenido del Excel. Revisa que las hojas y las celdas no estén dañadas.")
+        }
+    }
+
+    private fun readWorkbook(workbook: Workbook): ExcelV2ImportResult {
         val errors = mutableListOf<String>()
         val warnings = mutableListOf<String>()
+        var rejectedRows = 0
 
-        val inventarioSheet = workbook.getSheet("Inventario")
-            ?: return ExcelV2ImportResult(emptyList(), emptyList(), listOf("Falta la hoja requerida 'Inventario'"), emptyList())
+        val inventarioSheet = workbook.getSheet(SHEET_INVENTARIO)
+            ?: return fileFailure("Falta la hoja requerida 'Inventario'")
 
         val publicacionSheet = workbook.getSheet("Publicacion")
         val canalesSheet = workbook.getSheet("Canales")
 
         // 1. Parsear Hoja Inventario
         val rawProducts = mutableMapOf<String, MutableMap<String, String>>()
+        val rowNumbers = mutableMapOf<String, Int>()          // key -> número de fila en Excel (1 = encabezado)
+        val seenKeys = mutableMapOf<String, Pair<String, Int>>() // key en minúsculas -> (key original, fila)
         val headerMap = parseHeaders(inventarioSheet.getRow(0))
+
+        val missingColumns = REQUIRED_COLUMNS.filter { (name, _) -> !headerMap.containsKey(name) }.map { it.second }
+        if (missingColumns.isNotEmpty()) {
+            return fileFailure(
+                "Hoja 'Inventario', fila 1: faltan las columnas obligatorias " +
+                    missingColumns.joinToString(", ") { "'$it'" } + "."
+            )
+        }
 
         for (rowIdx in 1..inventarioSheet.lastRowNum) {
             val row = inventarioSheet.getRow(rowIdx) ?: continue
-            val keyVal = getSanitizedCellValue(row.getCell(headerMap["key"] ?: -1))
+            val excelRow = rowIdx + 1
+            val keyVal = cellText(row, headerMap["key"])
             if (keyVal.isBlank()) continue
+
+            val previous = seenKeys[keyVal.lowercase()]
+            if (previous != null) {
+                errors.add(
+                    "Hoja 'Inventario', fila $excelRow, columna 'Key': la clave '$keyVal' está duplicada " +
+                        "(ya aparece en la fila ${previous.second}); se rechaza esta fila y se conserva la primera."
+                )
+                rejectedRows++
+                continue
+            }
+            seenKeys[keyVal.lowercase()] = keyVal to excelRow
 
             val rowData = mutableMapOf<String, String>()
             headerMap.forEach { (colName, colIdx) ->
                 rowData[colName] = getSanitizedCellValue(row.getCell(colIdx))
             }
             rawProducts[keyVal] = rowData
+            rowNumbers[keyVal] = excelRow
+        }
+
+        if (rawProducts.isEmpty() && errors.isEmpty()) {
+            return fileFailure("La hoja 'Inventario' no tiene ningún producto (filas con 'Key').")
         }
 
         // 2. Parsear Hoja Publicacion (Marca, Condición, GTIN, MPN, Fotos)
         if (publicacionSheet != null) {
             val pubHeaderMap = parseHeaders(publicacionSheet.getRow(0))
+            if (!pubHeaderMap.containsKey("key")) {
+                warnings.add("Hoja 'Publicacion' sin columna 'Key': se ignora.")
+            }
             for (rowIdx in 1..publicacionSheet.lastRowNum) {
                 val row = publicacionSheet.getRow(rowIdx) ?: continue
-                val keyVal = getSanitizedCellValue(row.getCell(pubHeaderMap["key"] ?: -1))
+                val keyVal = cellText(row, pubHeaderMap["key"])
                 if (keyVal.isBlank() || !rawProducts.containsKey(keyVal)) continue
 
                 val targetData = rawProducts[keyVal]!!
@@ -80,15 +140,18 @@ class ExcelV2Parser {
         val channelOverrides = mutableListOf<ChannelOverride>()
         if (canalesSheet != null) {
             val canHeaderMap = parseHeaders(canalesSheet.getRow(0))
+            if (!canHeaderMap.containsKey("key") || !canHeaderMap.containsKey("canal")) {
+                warnings.add("Hoja 'Canales' sin columna 'Key' o 'Canal': se ignora.")
+            }
             for (rowIdx in 1..canalesSheet.lastRowNum) {
                 val row = canalesSheet.getRow(rowIdx) ?: continue
-                val keyVal = getSanitizedCellValue(row.getCell(canHeaderMap["key"] ?: -1))
-                val channel = getSanitizedCellValue(row.getCell(canHeaderMap["canal"] ?: -1))
+                val keyVal = cellText(row, canHeaderMap["key"])
+                val channel = cellText(row, canHeaderMap["canal"])
                 if (keyVal.isBlank() || channel.isBlank()) continue
 
-                val publishStr = getSanitizedCellValue(row.getCell(canHeaderMap["publicar"] ?: -1))
-                val customTitle = getSanitizedCellValue(row.getCell(canHeaderMap["título para el canal"] ?: -1))
-                val customPrice = getSanitizedCellValue(row.getCell(canHeaderMap["precio del canal"] ?: -1)).toLongOrNull()
+                val publishStr = cellText(row, canHeaderMap["publicar"])
+                val customTitle = cellText(row, canHeaderMap["título para el canal"])
+                val customPrice = cellText(row, canHeaderMap["precio del canal"]).toLongOrNull()
 
                 channelOverrides.add(
                     ChannelOverride(
@@ -105,11 +168,44 @@ class ExcelV2Parser {
         // 4. Mapear a entidades CommercialProduct con validaciones
         val commercialProducts = mutableListOf<CommercialProduct>()
         for ((keyStr, data) in rawProducts) {
+            val excelRow = rowNumbers.getValue(keyStr)
+            val rowErrors = mutableListOf<String>()
+
             val itemName = data["item name"] ?: data["item"] ?: keyStr
-            val ppCop = data["pp"]?.replace("$", "")?.replace(".", "")?.trim()?.toLongOrNull() ?: 0L
-            val pmCop = data["pm"]?.replace("$", "")?.replace(".", "")?.trim()?.toLongOrNull() ?: 0L
-            val costCop = data["costo"]?.replace("$", "")?.replace(".", "")?.trim()?.toLongOrNull() ?: 0L
-            val status = data["estado"] ?: "Activo"
+
+            // Montos: nunca se convierten en 0 por error. Se revisan los tres para informar todos los problemas de la fila de una vez.
+            val ppCop = readAmount(data["pp"], "PP", excelRow, rowErrors, mustBePositive = true)
+            val pmCop = readAmount(data["pm"], "PM", excelRow, rowErrors, mustBePositive = true)
+            val costCop: Long? = if (data["costo"].isNullOrBlank()) {
+                // El plan pide rechazar montos vacíos; para Costo (dato interno, no define precios) se acepta con aviso.
+                warnings.add("Hoja 'Inventario', fila $excelRow, columna 'Costo': está vacío; se toma 0.")
+                0L
+            } else {
+                readAmount(data["costo"], "Costo", excelRow, rowErrors, mustBePositive = false)
+            }
+            if (ppCop != null && pmCop != null && pmCop > ppCop) {
+                rowErrors.add(
+                    cellError(
+                        excelRow, "PM",
+                        "no puede ser mayor que PP (PM ${Money.of(pmCop).formatFormattedCop()} > PP ${Money.of(ppCop).formatFormattedCop()})"
+                    )
+                )
+            }
+
+            if (rowErrors.isNotEmpty() || ppCop == null || pmCop == null || costCop == null) {
+                errors.addAll(rowErrors)
+                rejectedRows++
+                continue
+            }
+
+            // Estado: sin valor = Activo. Un valor desconocido (por ejemplo "Inactvo") se trata como Activo, pero se avisa.
+            val status = data["estado"]?.takeIf { it.isNotBlank() } ?: "Activo"
+            if (!isKnownStatus(status)) {
+                warnings.add(
+                    "Hoja 'Inventario', fila $excelRow, columna 'Estado': '${status.take(30)}' no es un estado reconocido; " +
+                        "el producto se trata como Activo. Escribe 'Inactivo' para retirarlo de la venta."
+                )
+            }
             val desc = data["descripción"] ?: data["descripcion"] ?: data["descripción ab"] ?: "Sin descripción"
             val qty = data["cantidad disponible"]?.toIntOrNull() ?: 1
 
@@ -122,11 +218,6 @@ class ExcelV2Parser {
             data["link"]?.takeIf { it.startsWith("http") }?.let { images.add(it) }
             for (i in 1..8) {
                 data["pub_foto $i"]?.takeIf { it.startsWith("http") }?.let { images.add(it) }
-            }
-
-            if (pmCop > ppCop) {
-                errors.add("Error en producto $keyStr: PM ($pmCop) no puede ser mayor a PP ($ppCop)")
-                continue
             }
 
             commercialProducts.add(
@@ -148,9 +239,45 @@ class ExcelV2Parser {
             )
         }
 
-        workbook.close()
-        return ExcelV2ImportResult(commercialProducts, channelOverrides, errors, warnings)
+        return ExcelV2ImportResult(commercialProducts, channelOverrides, errors, warnings, rejectedRows)
     }
+
+    /** Lee un monto de la hoja Inventario. Si es inválido agrega el error (con hoja, fila y columna) y devuelve null. */
+    private fun readAmount(
+        raw: String?,
+        column: String,
+        excelRow: Int,
+        rowErrors: MutableList<String>,
+        mustBePositive: Boolean
+    ): Long? {
+        return when (val result = AmountParser.parse(raw)) {
+            is AmountResult.Invalid -> {
+                rowErrors.add(cellError(excelRow, column, result.reason))
+                null
+            }
+            is AmountResult.Valid -> {
+                if (mustBePositive && result.cop <= 0L) {
+                    rowErrors.add(cellError(excelRow, column, "debe ser mayor que 0"))
+                    null
+                } else {
+                    result.cop
+                }
+            }
+        }
+    }
+
+    private fun cellError(excelRow: Int, column: String, reason: String): String =
+        "Hoja 'Inventario', fila $excelRow, columna '$column': $reason"
+
+    private fun isKnownStatus(status: String): Boolean =
+        status.trim().lowercase() in setOf("activo", "inactivo") || EstadoItem.desdeEtiqueta(status) != null
+
+    private fun fileFailure(message: String) =
+        ExcelV2ImportResult(emptyList(), emptyList(), listOf(message), emptyList(), 0, fileError = message)
+
+    /** Texto de la celda en la columna [colIdx]; "" si la columna no existe en el encabezado (antes lanzaba excepción con -1). */
+    private fun cellText(row: Row, colIdx: Int?): String =
+        if (colIdx == null) "" else getSanitizedCellValue(row.getCell(colIdx))
 
     private fun parseHeaders(headerRow: Row?): Map<String, Int> {
         if (headerRow == null) return emptyMap()
@@ -189,5 +316,12 @@ class ExcelV2Parser {
         } else {
             text
         }
+    }
+
+    private companion object {
+        const val SHEET_INVENTARIO = "Inventario"
+
+        /** Columnas sin las cuales no se puede importar: (encabezado en minúsculas, nombre para mostrar). */
+        val REQUIRED_COLUMNS = listOf("key" to "Key", "pp" to "PP", "pm" to "PM")
     }
 }

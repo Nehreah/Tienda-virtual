@@ -5,18 +5,20 @@ import com.automata.commerce.service.NegotiationEngine
 import com.automata.commerce.service.NegotiationLevel
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
+import kotlin.random.Random
 import org.junit.jupiter.api.Assertions.*
 import org.junit.jupiter.api.Test
 
 class NegotiationEngineTest {
 
-    private val engine = NegotiationEngine()
+    // Fase 3.1: Random fijo para tests deterministas.
+    private val engine = NegotiationEngine(random = Random(seed = 42L))
 
     private val sampleProduct = CommercialProduct(
         key = ProductKey("PROD-001"),
         itemName = "Audífonos Bluetooth",
         publishedPrice = Money.of(120000), // PP
-        minimumPrice = Money.of(95000),   // PM
+        minimumPrice = Money.of(95000),    // PM
         cost = Money.of(70000),
         status = "Activo",
         description = "Prueba",
@@ -37,34 +39,46 @@ class NegotiationEngineTest {
         assertFalse(decision.accepted)
         assertEquals(NegotiationLevel.REJECTED_BELOW_PM, decision.level)
         assertNull(decision.agreedPrice)
-        // PP 120.000 · PM 95.000: primer escalón = 25 % de la distancia -> 113.750 -> redondeado hacia arriba a 114.000
-        assertEquals(Money.of(114000), decision.counterOffer)
         assertTrue(decision.counterOffer!! > sampleProduct.minimumPrice)
+        assertTrue(decision.counterOffer!! <= sampleProduct.publishedPrice)
         assertFalse(decision.message.contains("95.000"), "El texto no debe nombrar el piso")
     }
 
     @Test
-    fun `counter offers go down step by step but never reach or reveal PM`() {
-        val counters = (0..6).map { step ->
+    fun `counter offers for steps 0 to 3 have valid counter and never exceed PM`() {
+        // Con MAX_COUNTER_OFFERS = 4, pasos 0-3 producen contraoferta; paso 4+ escala a humano.
+        for (step in 0..3) {
             val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = step)
-            assertFalse(d.accepted)
-            assertNotNull(d.counterOffer)
+            assertFalse(d.accepted, "Paso $step no deberia aceptar")
+            assertNotNull(d.counterOffer, "Paso $step deberia tener contraoferta")
             assertTrue(d.counterOffer!! > sampleProduct.minimumPrice, "Contraoferta $step en o por debajo del PM")
-            assertTrue(d.counterOffer!! <= sampleProduct.publishedPrice, "Contraoferta $step por encima del precio publicado")
+            assertTrue(d.counterOffer!! <= sampleProduct.publishedPrice, "Contraoferta $step por encima del PP")
             assertFalse(d.message.contains("95.000"), "El texto del paso $step revela el PM")
-            assertEquals(step >= 3, d.isFinalCounter, "Marca de contraoferta final en el paso $step")
-            d.counterOffer!!.amountInCop
+            assertFalse(d.isEscalatedToHuman, "Paso $step no deberia escalar a humano")
         }
-        assertEquals(listOf(114000L, 108000L, 102000L, 102000L, 102000L, 102000L, 102000L), counters)
-        assertEquals(counters.sortedDescending(), counters, "Las contraofertas nunca suben")
+        // Paso 4: escala a humano (Fase 3.2)
+        val escalated = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 4)
+        assertTrue(escalated.isEscalatedToHuman, "Paso 4 debe escalar a humano")
+        assertNull(escalated.counterOffer, "Al escalar no hay contraoferta")
     }
 
     @Test
-    fun `an offer exactly at PM is still accepted at the offered price`() {
+    fun `offer exactly at PM falls into L4 and is NOT auto-accepted (Fase 3 3)`() {
+        // Fase 3.3: L4 nunca acepta al valor exacto para no revelar el PM por biseccion.
         val decision = engine.evaluateOffer(sampleProduct, Money.of(95000))
+        assertFalse(decision.accepted, "Oferta exacta en PM no se acepta en L4 (Fase 3.3)")
+        assertNotNull(decision.counterOffer)
+        assertTrue(decision.counterOffer!! > sampleProduct.minimumPrice)
+        assertFalse(decision.message.contains("95.000"), "No debe revelar el PM exacto")
+    }
+
+    @Test
+    fun `offer clearly above l2 threshold is accepted at L2`() {
+        // l2Price = PP - 50% * (PP - PM) = 120000 - 12500 = 107500
+        val decision = engine.evaluateOffer(sampleProduct, Money.of(108000))
         assertTrue(decision.accepted)
-        assertEquals(Money.of(95000), decision.agreedPrice)
-        assertFalse(decision.message.contains("límite"), "No debe confirmar que la cifra está pegada al piso")
+        assertEquals(NegotiationLevel.L2_MODERATE_DISCOUNT, decision.level)
+        assertEquals(Money.of(108000), decision.agreedPrice)
     }
 
     @Test
@@ -78,7 +92,7 @@ class NegotiationEngineTest {
 
     @Test
     fun `invariant test agreed price must never fall below PM`() {
-        val testOffers = listOf(50000L, 90000L, 95000L, 100000L, 110000L, 115000L, 120000L, 150000L)
+        val testOffers = listOf(50000L, 90000L, 100000L, 110000L, 115000L, 120000L, 150000L)
 
         for (offerCop in testOffers) {
             val decision = engine.evaluateOffer(sampleProduct, Money.of(offerCop))
@@ -86,20 +100,36 @@ class NegotiationEngineTest {
                 assertNotNull(decision.agreedPrice)
                 assertTrue(
                     decision.agreedPrice!! >= sampleProduct.minimumPrice,
-                    "VIOLACIÓN DE INVARIANZA: Precio acordado (${decision.agreedPrice}) es menor que PM (${sampleProduct.minimumPrice})"
+                    "VIOLACION: Precio acordado menor que PM"
                 )
             }
         }
     }
 
     @Test
-    fun `invariant test counter offers are never below PM for any offer and step`() {
+    fun `invariant test counter offers are never below PM for steps 0 to 3`() {
+        // Solo pasos 0-3; paso 4+ escala a humano sin contraoferta (Fase 3.2).
         for (offerCop in listOf(0L, 1000L, 50000L, 94999L)) {
-            for (step in 0..5) {
+            for (step in 0..3) {
                 val d = engine.evaluateOffer(sampleProduct, Money.of(offerCop), step)
                 assertFalse(d.accepted)
-                assertTrue(d.counterOffer!! >= sampleProduct.minimumPrice)
+                assertFalse(d.isEscalatedToHuman, "Paso $step no deberia escalar")
+                assertNotNull(d.counterOffer, "Paso $step deberia tener contraoferta")
+                assertTrue(
+                    d.counterOffer!! >= sampleProduct.minimumPrice,
+                    "Contraoferta paso $step por debajo del PM"
+                )
             }
         }
+    }
+
+    @Test
+    fun `escalation happens exactly at MAX_COUNTER_OFFERS (Fase 3 2)`() {
+        val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 4)
+        assertTrue(d.isEscalatedToHuman)
+        assertEquals(NegotiationLevel.ESCALATED_HUMAN, d.level)
+        assertFalse(d.accepted)
+        assertNull(d.counterOffer)
+        assertTrue(d.isFinalCounter)
     }
 }

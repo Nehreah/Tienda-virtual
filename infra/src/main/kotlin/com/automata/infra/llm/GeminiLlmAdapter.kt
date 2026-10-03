@@ -30,10 +30,26 @@ class GeminiLlmAdapter(
     override suspend fun parseIntent(userMessage: String, availableProducts: List<ProductKey>): ParsedCustomerIntent {
         val normalized = userMessage.lowercase().trim()
 
-        // Se quitan los códigos de producto antes de buscar la cifra: "PROD-001" no es un precio,
-        // y find() solo miraba la PRIMERA cifra del mensaje (el código), por lo que nunca detectaba la oferta.
+        // Fase 3.5: usar regex con límites de palabra y priorizar la clave más larga
+        // para que PROD-10 no sea confundida con PROD-1.
+        val sortedKeys = availableProducts.sortedByDescending { it.value.length }
+        val matchedProductKey = sortedKeys.firstOrNull { key ->
+            // \b no funciona bien con guiones; usamos (?<![A-Za-z0-9]) y (?![A-Za-z0-9]) como límites personalizados.
+            val escaped = Regex.escape(key.value)
+            Regex("""(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(normalized)
+        }
+
+        // Eliminar la clave con límites de palabra (no simple replace) para no cortar cifras adyacentes.
         var withoutKeys = normalized
-        availableProducts.forEach { withoutKeys = withoutKeys.replace(it.value.lowercase(), " ") }
+        if (matchedProductKey != null) {
+            val escaped = Regex.escape(matchedProductKey.value)
+            withoutKeys = withoutKeys.replace(
+                Regex("""(?<![A-Za-z0-9])$escaped(?![A-Za-z0-9])""", RegexOption.IGNORE_CASE),
+                " "
+            )
+        }
+
         // "110 mil" / "110k" -> 110000 (forma muy común de ofertar en Colombia).
         withoutKeys = withoutKeys.replace(thousandsSuffixRegex) { m -> (m.groupValues[1].toLong() * 1000).toString() }
 
@@ -42,11 +58,6 @@ class GeminiLlmAdapter(
             .mapNotNull { it.groupValues[1].replace(".", "").replace(",", "").toLongOrNull() }
             .firstOrNull { it > 1000 }
             ?.let { Money.of(it) }
-
-        // Detectar si menciona un producto específico
-        val matchedProductKey = availableProducts.find { key ->
-            normalized.contains(key.value.lowercase())
-        }
 
         val intentType = when {
             normalized.contains("humano") || normalized.contains("asesor") || normalized.contains("queja") ->
