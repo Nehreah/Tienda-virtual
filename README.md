@@ -1,109 +1,182 @@
 # Tienda Virtual Multicanal, Semiautogestionada
 
-> **Código Privado y Confidencial** — Arquitectura Hexagonal / Monolito Modular en Kotlin + Ktor + PostgreSQL + Shopify GraphQL API & Webhooks + Meta APIs (WhatsApp, Instagram, Messenger).
+> **Código Privado y Confidencial** — Kotlin · Ktor · PostgreSQL (Supabase) · Shopify GraphQL API · Meta APIs (WhatsApp, Instagram, Messenger) · Gemini LLM
 
-Plataforma comercial desacoplada que separa la **Matriz Comercial (Excel v2)** que define qué se vende y bajo qué condiciones, del **Estado Operacional (PostgreSQL / DB)** que permite ejecutar, sincronizar y controlar las ventas multicanal.
+Plataforma de gestión comercial que separa la **Matriz Comercial (Excel)** —fuente de verdad de lo que se vende y a qué precios— del **Estado Operacional (PostgreSQL)** que controla stock, reservas y conversaciones en tiempo real.
+
+El catálogo se carga subiendo un archivo `.xlsx`. Desde ese momento, el sistema atiende mensajes de clientes en WhatsApp, Instagram y Messenger de forma semiautomática: negocia precios respetando tus márgenes, reserva stock, y escala a un humano cuando el cliente dice que ya pagó. Todo se refleja en el dashboard web en tiempo real.
 
 ---
 
-## ⚡ Inicio Rápido en 1 Clic
+## ⚡ Inicio Rápido
 
-### En Linux / macOS:
+### Linux / macOS
 ```bash
 ./start.sh
 ```
 
-### En Windows:
+### Windows
 ```cmd
 start.bat
 ```
 
-El script verificará la configuración, creará `local.properties` si no existe e iniciará la aplicación en:
+El script crea `local.properties` a partir de la plantilla si no existe, compila y levanta el servidor:
 👉 **http://localhost:8080**
 
 ---
 
-## 🚀 Características Principales
+## 🗺️ Cómo funciona
 
-1. **Separación Estricta de Dominios**:
-   - **Matriz Comercial (`Excel v2`)**: Fuente autorizada de productos (`Key`), precios publicados (`PP`), precio mínimo de reserva (`PM`), costo, margen, fotos, descripciones `AB` y títulos por canal.
-   - **Aislamiento Financiero Inquebrantable**: `PM`, `costo`, `ganancia` y `margen` son información estrictamente interna. El sistema garantiza mediante pruebas automatizadas de frontera que estos campos **nunca** se transmitan a Shopify, Meta, Mercado Libre, DTOs públicos ni vitrina web.
-   - **Base Operacional (`PostgreSQL`)**: Controla en tiempo real el `stock_vivo = stock_maestro - reservas_activas - unidades_vendidas`, mapeos de IDs externos (`external_product_mappings`), cola de Outbox y máquina de estados de chat.
-
-2. **Integración Shopify GraphQL Admin API & Webhooks**:
-   - Mutaciones GraphQL de catálogo (`productCreate`, `productUpdate`, `inventorySetQuantities`).
-   - Receptor de Webhooks firmado con **HMAC SHA-256** (`orders/create`, `inventory/update`).
-
-3. **Canales de Mensajería Nativos de Meta**:
-   - **WhatsApp Business Cloud API** (`Graph API`, versión configurable con `META_GRAPH_API_VERSION`, tarjetas interactivas de catálogo).
-   - **Instagram DM & Facebook Messenger** (Send API, misma versión configurable).
-   - Receptor de Webhooks unificado (`GET/POST /webhooks/meta` con validación `hub.challenge`).
-
-4. **Saga Anti-Sobreventa & Retiro Multicanal**:
-   - Al confirmarse una venta en cualquier canal (ej. Shopify webhook), la saga ajusta a 0 o retira automáticamente las existencias en los demás canales en milisegundos.
-
-5. **Motor Comercial de Negociación (L0–L4)**:
-   - Escalera de concesiones comerciales respetando con invarianza absoluta $Precio \ge L4 \ge PM$.
-
-6. **Dashboard Operacional**:
-   - Interfaz web interactiva en HTMX / Ktor con previsualización del Excel, diff de cambios, estado de Shopify y Meta, y simulador de negociación en vivo.
+```
+Tu Excel (.xlsx)
+      │
+      ▼  POST /api/excel/upload
+  AppStore ──────────────────────────── Supabase PostgreSQL (si DATABASE_URL está configurado)
+  (memoria)                                       │
+      │                                           │
+      ├── GET /              Dashboard web (productos, stock, integraciones, tratos)
+      │
+      ├── POST /api/sim/chat  Simulador de negociación (prueba el motor L0-L4 desde el navegador)
+      │
+      ├── GET /api/excel/export  Descarga el inventario actual como .xlsx
+      │
+      ├── GET /public/p/{key}   Vitrina pública por producto (JSON, sin precios privados)
+      │
+      ├── POST /webhooks/shopify  Recibe órdenes de Shopify → descuenta stock → retira del resto
+      │
+      └── GET|POST /webhooks/meta  Recibe mensajes de WhatsApp / Instagram / Messenger
+                │
+                ▼
+         Pipeline de mensajes
+         (intención → negociación L0-L4 → reserva → instrucciones de pago → escalado humano)
+```
 
 ---
 
-## 🛠️ Estructura del Proyecto (`Monolito Modular`)
+## 🚀 Módulos del Proyecto
 
 ```
 tienda-virtual-multicanal/
-├── start.sh            # Script de inicio rápido en 1 clic para Linux/macOS
-├── start.bat           # Script de inicio rápido en 1 clic para Windows
-├── shared-kernel/      # Money (Long COP), ProductKey, PortResult, Eventos de Dominio
-├── commerce/           # CommercialProduct, OperationalInventory, Motor L0-L4, Saga
-├── messaging/          # Máquina de estados de conversación, LlmPort, MessagingPort
-├── adapters-shopify/   # Adaptador Shopify GraphQL API & Receptor HMAC Webhooks
-├── adapters-meta/      # Adaptador Meta Catalog API (CATALOG_ONLY en Colombia)
-├── adapters-channels/  # Adaptadores WhatsApp Cloud API, Instagram DM, Messenger
-├── infra/              # PostgresTables, ExcelV2Parser (3 hojas POI), GeminiLlmAdapter, AppConfig
-├── app/                # Servidor Ktor Netty, REST API, Webhooks y Dashboard HTMX
-├── local.properties.example # Plantilla de configuración
-├── local.properties    # Configuración local (IGNORADO EN GIT)
-├── NEGOCIO.xlsx        # Archivo de muestra de Matriz Comercial
-├── MANUAL_DE_USO.md    # Manual paso a paso de uso
-├── README.md           # Documentación técnica
-└── LICENSE             # Licencia de código privado
+├── shared-kernel/      # Money (Long en COP), ProductKey, PortResult, eventos de dominio
+├── commerce/           # CommercialProduct, OperationalInventory, motor de negociación L0-L4,
+│                       #   saga anti-sobreventa, cálculo financiero (ganancia, ROI, margen)
+├── messaging/          # Máquina de estados de conversación, LlmPort, MessagingPort, ChannelRouter
+├── adapters-shopify/   # Shopify GraphQL Admin API + receptor de webhooks HMAC SHA-256
+├── adapters-meta/      # Meta Catalog API (publicación de catálogo, modo CATALOG_ONLY en CO)
+├── adapters-channels/  # WhatsApp Cloud API, Instagram DM, Facebook Messenger (Send API)
+├── infra/              # Supabase/PostgreSQL (Exposed), ExcelV2Parser (Apache POI),
+│                       #   GeminiLlmAdapter, AppConfig (env vars + local.properties)
+└── app/                # Servidor Ktor/Netty, rutas REST, webhooks, dashboard HTMX
 ```
 
 ---
 
-## ⚙️ Configuración y Uso
+## ⚙️ Configuración
 
-### 1. Configuración de Credenciales (`local.properties`)
-Edita `local.properties` y asigna tus credenciales reales:
-```properties
-PORT=8080
-SHOPIFY_SHOP_DOMAIN=tu-tienda.myshopify.com
-SHOPIFY_ACCESS_TOKEN=shpat_tu_token_aqui
-SHOPIFY_WEBHOOK_SECRET=shpss_tu_secret_aqui
-META_CATALOG_ID=meta_cat_123456
-META_ACCESS_TOKEN=EAAG_tu_token_aqui
-WHATSAPP_PHONE_NUMBER_ID=1001234567890
-META_PAGE_ID=page_1234567890
-GEMINI_API_KEY=AIzaSy_tu_key_aqui
-META_APP_SECRET=el_app_secret_de_tu_app_de_meta   # firma de los webhooks de Meta
-PAYMENT_INSTRUCTIONS=Paga por Nequi al 3XX XXX XXXX a nombre de TU NOMBRE.
-DASHBOARD_USER=admin
-DASHBOARD_PASSWORD=una_clave_larga_y_unica        # protege el tablero y /api/* (HTTP Basic); úsalo detrás de HTTPS
-REQUIRE_META_SIGNATURE=true                       # (opcional) /webhooks/meta rechaza todo si falta META_APP_SECRET
-CORS_ALLOWED_HOST=tu-dominio.com                  # (opcional) restringe CORS a tu dominio; vacío = cualquiera
-```
-
-### 2. Ejecutar la Suite de Pruebas
-
-Para correr todas las pruebas unitarias y de seguridad financiera:
+Copia la plantilla y edita con tus datos reales:
 ```bash
-./gradlew test          # o: python run_tests.py (ejecuta Gradle de verdad y devuelve su código de salida)
+cp local.properties.example local.properties
 ```
+
+### Variables disponibles
+
+```properties
+# Puerto del servidor (por defecto: 8080)
+PORT=8080
+
+# Base de datos — Supabase PostgreSQL
+# Si no configuras esto, el inventario solo se guarda en memoria (se pierde al reiniciar).
+DATABASE_URL=jdbc:postgresql://aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_USER=postgres.ID_DEL_PROYECTO
+DATABASE_PASSWORD=tu_clave
+
+# Shopify
+SHOPIFY_SHOP_DOMAIN=tu-tienda.myshopify.com
+SHOPIFY_ACCESS_TOKEN=shpat_xxxxxxxxxxxxxxxxxxxxxxxx
+SHOPIFY_WEBHOOK_SECRET=shpss_xxxxxxxxxxxxxxxxxxxxxxx
+
+# Meta (catálogo, Instagram, Messenger)
+META_CATALOG_ID=123456789
+META_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
+META_COUNTRY_CODE=CO
+META_WEBHOOK_VERIFY_TOKEN=un_token_secreto_que_tú_eliges
+META_GRAPH_API_VERSION=v26.0
+META_APP_SECRET=                          # App Secret de Meta → verifica firma de webhooks
+
+# WhatsApp Business Cloud API
+WHATSAPP_PHONE_NUMBER_ID=1001234567890
+WHATSAPP_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
+
+# Instagram DM & Facebook Messenger
+META_PAGE_ID=1234567890
+
+# Texto que el bot envía cuando el cliente reserva (cómo pagar)
+PAYMENT_INSTRUCTIONS=Paga por Nequi al 3XX XXX XXXX a nombre de TU NOMBRE.
+
+# Protección del dashboard (HTTP Basic). Úsalo siempre detrás de HTTPS.
+# Si DASHBOARD_PASSWORD está vacío, el tablero queda abierto (solo para pruebas locales).
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=una_clave_larga_y_unica
+
+# Gemini LLM — interpreta mensajes de clientes
+GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxx
+
+# Opcionales de seguridad
+REQUIRE_META_SIGNATURE=true               # Rechaza webhooks de Meta sin firma válida
+CORS_ALLOWED_HOST=tu-dominio.com          # Restringe CORS; vacío = cualquier origen
+```
+
+> **DASHBOARD_PASSWORD** es obligatorio antes de exponer la app a Internet.  
+> **META_APP_SECRET** es obligatorio para que los webhooks de Meta sean seguros.
+
+---
+
+## 🔐 Seguridad financiera
+
+El sistema garantiza por diseño y por pruebas automatizadas que los campos sensibles —precio mínimo (`PM`), costo y margen— **nunca** se exponen a clientes, Shopify, Meta ni en la vitrina pública (`/public/p/{key}`).
+
+El motor de negociación (L0–L4) siempre cumple: $\text{Precio acordado} \ge L4 \ge PM$.
+
+---
+
+## 🔄 Flujo de una venta
+
+1. **Cliente escribe** en WhatsApp / Instagram / Messenger.
+2. El **pipeline** detecta la intención (consulta, oferta, reserva, pago).
+3. Si hace una oferta, el **motor L0-L4** la evalúa:
+   - ≥ PP → acepta al precio publicado.
+   - Entre PM y PP → acepta con descuento escalonado.
+   - < PM → contraoferta progresiva (nunca revela el PM).
+4. Al reservar, descuenta una unidad del `stock_vivo` y envía instrucciones de pago.
+5. Al recibir comprobante → escala a un humano y congela la reserva.
+6. Reservas sin pago vencen en ~15 min y liberan el stock automáticamente.
+7. Si la venta viene de Shopify (webhook `orders/create`), la **saga anti-sobreventa** retira el stock del resto de canales (Meta, etc.) en milisegundos.
+
+---
+
+## 🧪 Pruebas
+
+```bash
+./gradlew test
+# o también:
+python run_tests.py
+```
+
+La suite cubre: motor de negociación L0-L4, aislamiento financiero (fuga de PM/costo), saga anti-sobreventa, pipeline de mensajes, parseo/exportación de Excel, router de canales e idempotencia de eventos.
+
+---
+
+## 📁 Otros archivos
+
+| Archivo | Descripción |
+|---|---|
+| `local.properties.example` | Plantilla de configuración (copia y edita) |
+| `NEGOCIO.xlsx` | Plantilla de Matriz Comercial (sube desde el dashboard) |
+| `MANUAL_DE_USO.md` | Manual operativo paso a paso |
+| `LICENSE` | Licencia de código privado |
 
 ---
 
 ## 🔒 Licencia y Confidencialidad
-Este software es **Código Privado y Confidencial**. Todos los derechos reservados. Consultar el archivo [`LICENSE`](LICENSE) para más detalles.
+
+**Código Privado y Confidencial.** Todos los derechos reservados. Ver [`LICENSE`](LICENSE).
