@@ -33,5 +33,8 @@ data class Conversation(
     val state: ConversationState = ConversationState.IDLE,
     val messages: List<Message> = emptyList(),
     val currentReservationId: String? = null,
+    val agreedPriceCop: Long? = null, // precio acordado en la negociación (solo precio de venta, nunca PM/costo)
+    val counterOfferCount: Int = 0, // contraofertas ya hechas al cliente por el producto activo
+    val pendingCounterCop: Long? = null, // última contraoferta que el cliente aún no aceptó (siempre un precio de venta)
     val lastUpdated: Instant = Clock.System.now()
 )

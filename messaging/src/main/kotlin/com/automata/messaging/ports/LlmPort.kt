@@ -8,6 +8,7 @@ import kotlinx.serialization.Serializable
 enum class CustomerIntentType {
     QUERY_PRODUCT_INFO,
     MAKE_OFFER,
+    ACCEPT_COUNTER_OFFER,
     REQUEST_RESERVATION,
     SEND_PAYMENT_PROOF,
     REQUEST_HUMAN_AGENT,

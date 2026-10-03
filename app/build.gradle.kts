@@ -17,6 +17,8 @@ dependencies {
     implementation(project(":adapters-channels"))
     implementation(project(":infra"))
     implementation("org.jetbrains.exposed:exposed-core:0.47.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.5.0")
 
     val ktorVersion = "2.3.8"
     implementation("io.ktor:ktor-server-core:$ktorVersion")

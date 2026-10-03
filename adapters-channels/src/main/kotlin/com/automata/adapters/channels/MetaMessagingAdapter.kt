@@ -9,13 +9,13 @@ import io.ktor.http.*
 import kotlinx.serialization.json.*
 
 /**
- * Adaptador de Producción para Instagram Direct Messages & Facebook Messenger (Send API v18.0+).
+ * Adaptador de Producción para Instagram Direct Messages & Facebook Messenger (Send API).
  */
 class MetaMessagingAdapter(
     override val channelName: String, // "instagram" | "messenger"
     private val pageOrIgAccountId: String,
     private val accessToken: String,
-    private val apiVersion: String = "v18.0",
+    private val apiVersion: String,
     private val httpClient: HttpClient = HttpClient()
 ) : MessagingPort {
 

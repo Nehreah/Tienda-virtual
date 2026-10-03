@@ -19,6 +19,11 @@ META_CATALOG_ID=meta_cat_123456
 META_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
 META_COUNTRY_CODE=CO
 META_WEBHOOK_VERIFY_TOKEN=verify_token_secret_123
+# Versión de la Graph API (WhatsApp, Instagram, Messenger). Cámbiala aquí cuando Meta retire la actual.
+META_GRAPH_API_VERSION=v26.0
+# App Secret de tu app de Meta (Configuración > Básica). Con él se verifica la firma de cada webhook.
+# Si lo dejas vacío, /webhooks/meta acepta eventos SIN verificar firma (solo para pruebas locales).
+META_APP_SECRET=
 
 # WhatsApp Business Cloud API
 WHATSAPP_PHONE_NUMBER_ID=1001234567890
@@ -26,6 +31,20 @@ WHATSAPP_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
 
 # Instagram DM & Facebook Messenger API
 META_PAGE_ID=page_1234567890
+
+# Texto que el bot envía al cliente cuando reserva un producto (cómo pagar). Sin esto envía un mensaje genérico
+# ("Un asesor te enviará los datos de pago"). Descomenta y pon TUS datos reales; NO dejes datos de ejemplo,
+# porque start.sh copia este archivo tal cual y los clientes recibirían ese texto.
+# PAYMENT_INSTRUCTIONS=Paga por Nequi al 3XX XXX XXXX a nombre de TU NOMBRE.
+
+# Acceso al tablero y a /api/* (HTTP Basic). Si DASHBOARD_PASSWORD queda vacío, el tablero queda ABIERTO
+# (solo para pruebas locales). Defínelo antes de exponer la app a Internet y úsala siempre detrás de HTTPS.
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=
+
+# Endurecimiento opcional (descomenta cuando publiques):
+# REQUIRE_META_SIGNATURE=true   -> /webhooks/meta rechaza todo si META_APP_SECRET está vacío
+# CORS_ALLOWED_HOST=tu-dominio.com -> solo ese dominio puede llamar a la API desde un navegador
 
 # Google Gemini LLM API Key
 GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxx

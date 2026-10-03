@@ -50,12 +50,33 @@ object AppConfig {
     val metaCountryCode: String get() = get("META_COUNTRY_CODE", "CO")
     val metaWebhookVerifyToken: String get() = get("META_WEBHOOK_VERIFY_TOKEN", "verify_token_123")
 
+    // Versión de la Graph API de Meta (WhatsApp, Instagram, Messenger). Centralizada aquí para
+    // poder actualizarla sin tocar los adaptadores. Verifica la vigente en developers.facebook.com/docs/graph-api/changelog
+    // App Secret de la app de Meta: firma de los webhooks (X-Hub-Signature-256). Sin valor por defecto.
+    val metaAppSecret: String get() = get("META_APP_SECRET")
+
+    val metaGraphApiVersion: String get() = get("META_GRAPH_API_VERSION", "v26.0")
+
     // WhatsApp Cloud API Config
     val whatsappPhoneNumberId: String get() = get("WHATSAPP_PHONE_NUMBER_ID", "100123456789")
     val whatsappAccessToken: String get() = get("WHATSAPP_ACCESS_TOKEN", "EAAG_whatsapp_token_123")
 
     // Instagram & Messenger Config
     val metaPageId: String get() = get("META_PAGE_ID", "page_123456789")
+
+    // Texto que el bot envía al cliente tras reservar (cómo pagar). Configúralo con tus datos reales.
+    val paymentInstructions: String get() = get("PAYMENT_INSTRUCTIONS", "Un asesor te enviará los datos de pago en breve.")
+
+    // Acceso al tablero y a /api/*: HTTP Basic. Sin DASHBOARD_PASSWORD la protección queda desactivada (solo para uso local).
+    val dashboardUser: String get() = get("DASHBOARD_USER", "admin")
+    val dashboardPassword: String get() = get("DASHBOARD_PASSWORD")
+
+    // Endurecimiento opcional (por defecto NO cambia nada del comportamiento actual).
+    // REQUIRE_META_SIGNATURE=true: /webhooks/meta rechaza todo si META_APP_SECRET está vacío.
+    val requireMetaSignature: Boolean get() = get("REQUIRE_META_SIGNATURE", "false").trim().equals("true", ignoreCase = true)
+
+    // CORS_ALLOWED_HOST=mi-dominio.com: solo ese origen puede llamar a la API desde un navegador (vacío = cualquiera, como hasta ahora).
+    val corsAllowedHost: String get() = get("CORS_ALLOWED_HOST")
 
     // Google Gemini LLM API Key
     val geminiApiKey: String get() = get("GEMINI_API_KEY", "")

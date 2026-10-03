@@ -35,8 +35,8 @@ El script verificará la configuración, creará `local.properties` si no existe
    - Receptor de Webhooks firmado con **HMAC SHA-256** (`orders/create`, `inventory/update`).
 
 3. **Canales de Mensajería Nativos de Meta**:
-   - **WhatsApp Business Cloud API** (`Graph API v18.0+`, tarjetas interactivas de catálogo).
-   - **Instagram DM & Facebook Messenger** (Send API v18.0+).
+   - **WhatsApp Business Cloud API** (`Graph API`, versión configurable con `META_GRAPH_API_VERSION`, tarjetas interactivas de catálogo).
+   - **Instagram DM & Facebook Messenger** (Send API, misma versión configurable).
    - Receptor de Webhooks unificado (`GET/POST /webhooks/meta` con validación `hub.challenge`).
 
 4. **Saga Anti-Sobreventa & Retiro Multicanal**:
@@ -88,13 +88,19 @@ META_ACCESS_TOKEN=EAAG_tu_token_aqui
 WHATSAPP_PHONE_NUMBER_ID=1001234567890
 META_PAGE_ID=page_1234567890
 GEMINI_API_KEY=AIzaSy_tu_key_aqui
+META_APP_SECRET=el_app_secret_de_tu_app_de_meta   # firma de los webhooks de Meta
+PAYMENT_INSTRUCTIONS=Paga por Nequi al 3XX XXX XXXX a nombre de TU NOMBRE.
+DASHBOARD_USER=admin
+DASHBOARD_PASSWORD=una_clave_larga_y_unica        # protege el tablero y /api/* (HTTP Basic); úsalo detrás de HTTPS
+REQUIRE_META_SIGNATURE=true                       # (opcional) /webhooks/meta rechaza todo si falta META_APP_SECRET
+CORS_ALLOWED_HOST=tu-dominio.com                  # (opcional) restringe CORS a tu dominio; vacío = cualquiera
 ```
 
 ### 2. Ejecutar la Suite de Pruebas
 
-Para correr todas las 8 clases de prueba unitarias y de seguridad financiera:
+Para correr todas las pruebas unitarias y de seguridad financiera:
 ```bash
-./gradlew test
+./gradlew test          # o: python run_tests.py (ejecuta Gradle de verdad y devuelve su código de salida)
 ```
 
 ---

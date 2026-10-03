@@ -7,6 +7,9 @@ import com.automata.adapters.meta.MetaShopAdapter
 import com.automata.adapters.shopify.ShopifyCatalogAdapter
 import com.automata.adapters.shopify.ShopifyWebhookHandler
 import com.automata.app.dashboard.*
+import com.automata.app.pipeline.InboundMessagePipeline
+import com.automata.app.pipeline.PipelineCatalog
+import com.automata.app.pipeline.PipelineOutcome
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.EstadoItem
 import com.automata.commerce.model.InventarioItem
@@ -18,11 +21,17 @@ import com.automata.commerce.service.NegotiationEngine
 import com.automata.infra.config.AppConfig
 import com.automata.infra.db.DatabaseFactory
 import com.automata.infra.db.ExposedInventarioRepository
+import com.automata.infra.db.ExposedProcessedEventStore
 import com.automata.infra.db.Origen
 import com.automata.infra.excel.ExcelGenerator
 import com.automata.infra.excel.ExcelV2Parser
 import com.automata.infra.llm.GeminiLlmAdapter
+import com.automata.messaging.model.ConversationState
+import com.automata.messaging.ports.ChannelRouter
+import com.automata.messaging.ports.InMemoryConversationStore
 import com.automata.messaging.ports.CustomerIntentType
+import com.automata.messaging.ports.InMemoryProcessedEventStore
+import com.automata.messaging.ports.ProcessedEventStore
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import io.ktor.http.*
@@ -36,6 +45,14 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 
 object AppStore {
@@ -44,6 +61,83 @@ object AppStore {
     val channelMappings = mutableMapOf<String, MutableMap<String, String>>()
     val apiIntegrations = mutableListOf<ApiIntegrationStatus>()
     val chatDeals = mutableListOf<ChatDealLog>()
+
+    /** true solo si DatabaseFactory.connect() terminó sin error. */
+    @Volatile var databaseConnected: Boolean = false
+
+    /**
+     * Estado REAL de las integraciones, calculado desde la configuración (nunca inventado).
+     * No existe aún un health-check contra cada API, por eso solo la base de datos puede marcarse FUNCIONAL (se verifica al conectar):
+     * - DESHABILITADO: faltan credenciales.
+     * - DEGRADADO: credenciales presentes pero sin verificación en vivo (o adaptador incompleto).
+     */
+    fun refreshIntegrationStatuses() {
+        fun configured(vararg keys: String) = keys.all { AppConfig.get(it).isNotBlank() }
+        fun status(ok: Boolean) = if (ok) ApiStatus.DEGRADADO else ApiStatus.DESHABILITADO
+        val noCheck = "Sin verificar"
+        val metaSig = if (AppConfig.metaAppSecret.isNotBlank()) "firma de webhook activa"
+                      else "SIN META_APP_SECRET: webhook sin verificar firma"
+
+        apiIntegrations.clear()
+        apiIntegrations.addAll(
+            listOf(
+                ApiIntegrationStatus(
+                    "Shopify GraphQL API", "E-Commerce",
+                    status(configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET")),
+                    if (configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET"))
+                        "Credenciales presentes • sin verificación en vivo" else "Faltan credenciales de Shopify",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "Meta Catalog API", "Catálogo",
+                    ApiStatus.DEGRADADO.takeIf { configured("META_CATALOG_ID", "META_ACCESS_TOKEN") } ?: ApiStatus.DESHABILITADO,
+                    "Adaptador pendiente: aún NO publica ni actualiza productos en Meta",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "WhatsApp Cloud API", "Mensajería",
+                    status(configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN")),
+                    if (configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"))
+                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes" else "Faltan credenciales de WhatsApp",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "Instagram DM API", "Mensajería",
+                    status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
+                    if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
+                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes" else "Faltan META_PAGE_ID / META_ACCESS_TOKEN",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "Facebook Messenger API", "Mensajería",
+                    status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
+                    if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
+                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes" else "Faltan META_PAGE_ID / META_ACCESS_TOKEN",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "Gemini LLM Engine", "IA & NLP",
+                    status(configured("GEMINI_API_KEY")),
+                    if (configured("GEMINI_API_KEY")) "API key presente • el intérprete actual usa reglas locales (aún no llama a Gemini)" else "Falta GEMINI_API_KEY • el flujo usa el intérprete por reglas locales",
+                    noCheck
+                ),
+                ApiIntegrationStatus(
+                    "Base de Datos Operacional", "Almacenamiento",
+                    when {
+                        databaseConnected -> ApiStatus.FUNCIONAL
+                        AppConfig.databaseConfigured -> ApiStatus.DEGRADADO
+                        else -> ApiStatus.DESHABILITADO
+                    },
+                    when {
+                        databaseConnected -> "Supabase PostgreSQL conectada al iniciar"
+                        AppConfig.databaseConfigured -> "DATABASE_URL presente pero la conexión falló"
+                        else -> "Sin DATABASE_URL: modo demo en memoria"
+                    },
+                    if (databaseConnected) "Al iniciar" else noCheck
+                )
+            )
+        )
+    }
 
     fun seedSampleData() {
         val p1 = CommercialProduct(
@@ -84,19 +178,6 @@ object AppStore {
         channelMappings[p1.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654321", "meta_catalogo" to "meta_PROD-001")
         channelMappings[p2.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654322", "meta_catalogo" to "meta_PROD-002")
 
-        apiIntegrations.clear()
-        apiIntegrations.addAll(
-            listOf(
-                ApiIntegrationStatus("Shopify GraphQL API", "E-Commerce", ApiStatus.FUNCIONAL, "Webhooks HMAC Activos • GraphQL Admin API v2024-01", "Hace 1 min"),
-                ApiIntegrationStatus("Meta Catalog API", "Catálogo", ApiStatus.FUNCIONAL, "Catalog ID: 109823749 • Modo: CATALOG_ONLY (Colombia)", "Hace 3 min"),
-                ApiIntegrationStatus("WhatsApp Cloud API", "Mensajería", ApiStatus.FUNCIONAL, "Phone Number ID: 104928374 • Verify Token Ok", "Hace 2 min"),
-                ApiIntegrationStatus("Instagram DM API", "Mensajería", ApiStatus.FUNCIONAL, "Instagram Account ID: 178414000 • Messaging API Activa", "Hace 5 min"),
-                ApiIntegrationStatus("Facebook Messenger API", "Mensajería", ApiStatus.FUNCIONAL, "Page ID: 1009283741 • Graph API v18.0 Webhooks", "Hace 4 min"),
-                ApiIntegrationStatus("Gemini LLM Engine", "IA & NLP", ApiStatus.FUNCIONAL, "Parsing de Intenciones L0-L4 • gemini-1.5-flash", "Hace 1 min"),
-                ApiIntegrationStatus("Base de Datos Operacional", "Almacenamiento", ApiStatus.FUNCIONAL, "Supabase PostgreSQL / Exposed Repositories", "Hace 30 s")
-            )
-        )
-
         chatDeals.clear()
         chatDeals.addAll(
             listOf(
@@ -110,17 +191,75 @@ object AppStore {
     }
 }
 
+/** Expone AppStore al pipeline de mensajes con acceso sincronizado (el pipeline corre en otras corrutinas). */
+object AppStoreCatalog : PipelineCatalog {
+    override fun productKeys(): List<ProductKey> =
+        synchronized(AppStore.products) { AppStore.products.keys.map { ProductKey(it) } }
+
+    override fun product(key: ProductKey): CommercialProduct? =
+        synchronized(AppStore.products) { AppStore.products[key.value] }
+
+    override fun inventory(key: ProductKey): OperationalInventory? =
+        synchronized(AppStore.inventory) { AppStore.inventory[key.value] }
+
+    override fun saveInventory(inventory: OperationalInventory) {
+        synchronized(AppStore.inventory) { AppStore.inventory[inventory.productKey.value] = inventory }
+    }
+}
+
+private fun channelDisplayName(channel: String): String = when (channel.lowercase()) {
+    "whatsapp" -> "WhatsApp"
+    "instagram" -> "Instagram DM"
+    "messenger" -> "Messenger"
+    else -> channel
+}
+
+/** Refleja la conversación en el tablero de tratos del dashboard (una fila por conversación). */
+private fun recordDeal(outcome: PipelineOutcome) {
+    val conv = outcome.conversation
+    val state = when (conv.state) {
+        ConversationState.PAID_CONFIRMED -> DealState.PENDIENTE_ENVIO
+        ConversationState.CLOSED -> DealState.CANCELADO
+        else -> DealState.EN_NEGOCIACION
+    }
+    val deal = ChatDealLog(
+        id = conv.conversationId,
+        customer = conv.customerPhoneOrId,
+        channel = conv.channel,
+        channelDisplayName = channelDisplayName(conv.channel),
+        productName = outcome.productName ?: "—",
+        offeredPrice = outcome.amountCop?.let { "${Money.of(it).formatFormattedCop()} COP" } ?: "—",
+        dealState = state,
+        dealStateLabel = outcome.dealLabel,
+        timestamp = java.time.LocalTime.now().withSecond(0).withNano(0).toString()
+    )
+    synchronized(AppStore.chatDeals) {
+        AppStore.chatDeals.removeAll { it.id == deal.id }
+        AppStore.chatDeals.add(0, deal)
+    }
+}
+
+/** Exige HTTP Basic si DASHBOARD_PASSWORD está definido. Devuelve false (ya respondió 401) cuando no hay acceso. */
+private suspend fun ApplicationCall.requireDashboardAuth(auth: DashboardAuth): Boolean {
+    if (auth.isAuthorized(request.headers[HttpHeaders.Authorization])) return true
+    response.header(HttpHeaders.WWWAuthenticate, "Basic realm=\"Automata Comercial\", charset=\"UTF-8\"")
+    respondText("Autenticación requerida", status = HttpStatusCode.Unauthorized)
+    return false
+}
+
 fun main() {
     AppStore.seedSampleData()
     if (AppConfig.databaseConfigured) {
         println("Conectando a Supabase PostgreSQL...")
         try {
             DatabaseFactory.connect()
+            AppStore.databaseConnected = true
             println("Conexión a Supabase establecida correctamente.")
         } catch (e: Exception) {
             System.err.println("No se pudo conectar a Supabase: ${e.message}")
         }
     }
+    AppStore.refreshIntegrationStatuses()
     val port = AppConfig.port
     println("===============================================================")
     println("  Autómata Comercial Multicanal v5.3 (Código Privado)")
@@ -132,7 +271,10 @@ fun main() {
 
 fun Application.module() {
     install(ContentNegotiation) { json() }
-    install(CORS) { anyHost() }
+    install(CORS) {
+        val allowedHost = AppConfig.corsAllowedHost.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
+        if (allowedHost.isBlank()) anyHost() else allowHost(allowedHost, schemes = listOf("https", "http"))
+    }
 
     val negotiationEngine = NegotiationEngine()
 
@@ -156,30 +298,76 @@ fun Application.module() {
     // Adaptadores Canales Mensajería (WhatsApp, Instagram DM, Facebook Messenger)
     val whatsAppAdapter = WhatsAppMessagingAdapter(
         phoneNumberId = AppConfig.whatsappPhoneNumberId,
-        accessToken = AppConfig.whatsappAccessToken
+        accessToken = AppConfig.whatsappAccessToken,
+        apiVersion = AppConfig.metaGraphApiVersion
     )
     val instagramAdapter = MetaMessagingAdapter(
         channelName = "instagram",
         pageOrIgAccountId = AppConfig.metaPageId,
-        accessToken = AppConfig.metaAccessToken
+        accessToken = AppConfig.metaAccessToken,
+        apiVersion = AppConfig.metaGraphApiVersion
     )
     val messengerAdapter = MetaMessagingAdapter(
         channelName = "messenger",
         pageOrIgAccountId = AppConfig.metaPageId,
-        accessToken = AppConfig.metaAccessToken
+        accessToken = AppConfig.metaAccessToken,
+        apiVersion = AppConfig.metaGraphApiVersion
     )
+
+    // Enrutador por canal (lo consume el pipeline de mensajes entrantes)
+    val channelRouter = ChannelRouter(listOf(whatsAppAdapter, instagramAdapter, messengerAdapter))
 
     // Handlers de Webhooks
     val shopifyWebhookHandler = ShopifyWebhookHandler(webhookSecret = AppConfig.shopifyWebhookSecret)
     val metaWebhookReceiver = MetaWebhookReceiver(verifyToken = AppConfig.metaWebhookVerifyToken)
+    // Idempotencia persistente si la base conectó; si no, memoria del proceso.
+    val processedEvents: ProcessedEventStore =
+        if (AppStore.databaseConnected) ExposedProcessedEventStore() else InMemoryProcessedEventStore()
+    if (AppConfig.metaAppSecret.isBlank()) {
+        if (AppConfig.requireMetaSignature) {
+            System.err.println("META_APP_SECRET vacío y REQUIRE_META_SIGNATURE=true: /webhooks/meta rechazará TODOS los eventos hasta que lo definas.")
+        } else {
+            System.err.println("ADVERTENCIA: META_APP_SECRET vacío; /webhooks/meta aceptará eventos SIN verificar firma.")
+        }
+    }
+
+    // Protección opcional (HTTP Basic) del tablero y de /api/*. Los webhooks y la vitrina pública no pasan por aquí.
+    val dashboardAuth = DashboardAuth(AppConfig.dashboardUser, AppConfig.dashboardPassword)
+    if (!dashboardAuth.enabled) {
+        System.err.println("ADVERTENCIA: DASHBOARD_PASSWORD vacío; el tablero y /api/* están abiertos sin contraseña. Defínelo antes de exponer la app a Internet.")
+    }
 
     val llmAdapter = GeminiLlmAdapter(apiKey = AppConfig.geminiApiKey)
+
+    // Pipeline de mensajes entrantes (cliente -> conversación -> intención -> negociación -> reserva -> respuesta)
+    val inboundPipeline = InboundMessagePipeline(
+        llm = llmAdapter,
+        engine = negotiationEngine,
+        catalog = AppStoreCatalog,
+        conversations = InMemoryConversationStore(),
+        router = channelRouter,
+        paymentInstructions = AppConfig.paymentInstructions
+    )
+    // Meta exige responder 200 rápido: los mensajes se procesan en segundo plano.
+    val pipelineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    pipelineScope.launch {
+        while (isActive) {
+            delay(60_000)
+            try { inboundPipeline.sweep() } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                System.err.println("Error liberando reservas vencidas: ${e.message}")
+            }
+        }
+    }
+    environment.monitor.subscribe(ApplicationStopping) { pipelineScope.cancel() }
     val excelParser = ExcelV2Parser()
 
     routing {
         // 1. Dashboard Web Interactivo
         get("/") {
-            val productList = AppStore.products.values.toList()
+            if (!call.requireDashboardAuth(dashboardAuth)) return@get
+            // Copias tomadas bajo candado: el pipeline modifica productos/inventario desde otras corrutinas.
+            val productList = synchronized(AppStore.products) { AppStore.products.values.toList() }
+            val inventorySnapshot = synchronized(AppStore.inventory) { AppStore.inventory.toMap() }
             val statuses = mutableListOf<ChannelListingStatus>()
 
             productList.forEach { p ->
@@ -191,16 +379,17 @@ fun Application.module() {
 
             val html = DashboardRenderer.renderDashboardPage(
                 products = productList,
-                inventoryMap = AppStore.inventory,
+                inventoryMap = inventorySnapshot,
                 channelStatuses = statuses,
                 apiIntegrations = AppStore.apiIntegrations,
-                chatDeals = AppStore.chatDeals
+                chatDeals = synchronized(AppStore.chatDeals) { AppStore.chatDeals.toList() }
             )
             call.respondText(html, ContentType.Text.Html)
         }
 
         // 2. Simulador de Negociación L0-L4
         post("/api/sim/chat") {
+            if (!call.requireDashboardAuth(dashboardAuth)) return@post
             val parameters = call.receiveParameters()
             val message = parameters["message"] ?: ""
 
@@ -209,8 +398,12 @@ fun Application.module() {
                 return@post
             }
 
-            val parsedIntent = llmAdapter.parseIntent(message, AppStore.products.keys.map { ProductKey(it) })
-            val product = AppStore.products.values.firstOrNull() ?: AppStore.products.values.first()
+            val parsedIntent = llmAdapter.parseIntent(message, AppStoreCatalog.productKeys())
+            val product = synchronized(AppStore.products) { AppStore.products.values.firstOrNull() }
+            if (product == null) {
+                call.respondText("<p class='text-rose-600'>No hay productos cargados. Sube primero el Excel.</p>", ContentType.Text.Html)
+                return@post
+            }
 
             val offeredPrice = parsedIntent.offeredPrice
             var dealState = DealState.EN_NEGOCIACION
@@ -246,7 +439,7 @@ fun Application.module() {
                 """.trimIndent()
             }
 
-            AppStore.chatDeals.add(
+            synchronized(AppStore.chatDeals) { AppStore.chatDeals.add(
                 0,
                 ChatDealLog(
                     id = "SIM-${(System.currentTimeMillis() % 10000)}",
@@ -259,13 +452,14 @@ fun Application.module() {
                     dealStateLabel = dealLabel,
                     timestamp = "Ahora mismo"
                 )
-            )
+            ) }
 
             call.respondText(responseHtml, ContentType.Text.Html)
         }
 
         // 3. Subida / Importación de Excel a Supabase & AppStore
         post("/api/excel/upload") {
+            if (!call.requireDashboardAuth(dashboardAuth)) return@post
             val multipart = call.receiveMultipart()
             var fileBytes: ByteArray? = null
 
@@ -289,12 +483,11 @@ fun Application.module() {
             }
 
             parseResult.products.forEach { p ->
-                AppStore.products[p.key.value] = p
-                val currentInv = AppStore.inventory[p.key.value]
-                if (currentInv != null) {
-                    AppStore.inventory[p.key.value] = currentInv.withUpdatedMaster(p.masterQuantity)
-                } else {
-                    AppStore.inventory[p.key.value] = OperationalInventory(p.key, stockMaestro = p.masterQuantity)
+                synchronized(AppStore.products) { AppStore.products[p.key.value] = p }
+                synchronized(AppStore.inventory) {
+                    val currentInv = AppStore.inventory[p.key.value]
+                    AppStore.inventory[p.key.value] = currentInv?.withUpdatedMaster(p.masterQuantity)
+                        ?: OperationalInventory(p.key, stockMaestro = p.masterQuantity)
                 }
 
                 // Guardar en Supabase si el repositorio está disponible
@@ -323,13 +516,9 @@ fun Application.module() {
 
         // 4. Exportación de Datos de Supabase a Excel (.xlsx)
         get("/api/excel/export") {
-            val items: List<InventarioItem> = if (dbRepository != null) {
-                try {
-                    dbRepository.findAll()
-                } catch (e: Exception) {
-                    emptyList()
-                }
-            } else null ?: AppStore.products.values.map { p ->
+            if (!call.requireDashboardAuth(dashboardAuth)) return@get
+            // Datos en memoria (se usan si no hay BD o si la consulta a la BD falla, en vez de exportar una lista vacía).
+            fun memoryItems(): List<InventarioItem> = synchronized(AppStore.products) { AppStore.products.values.toList() }.map { p ->
                 InventarioItem(
                     key = p.key,
                     item = p.itemName,
@@ -341,6 +530,18 @@ fun Application.module() {
                     fotos = p.images,
                     estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
                 )
+            }
+            val items: List<InventarioItem> = if (dbRepository != null) {
+                try {
+                    dbRepository.findAll()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    System.err.println("Export Excel: falló la consulta a la BD (${e.message}); se exportan los datos en memoria.")
+                    memoryItems()
+                }
+            } else {
+                memoryItems()
             }
 
             val excelBytes = ExcelGenerator.exportToBytes(items)
@@ -364,13 +565,20 @@ fun Application.module() {
                 return@post
             }
 
+            // Idempotencia: Shopify reenvía webhooks; el mismo evento no puede descontar stock dos veces.
+            val shopifyEventId = call.request.headers["X-Shopify-Event-Id"]
+                ?: call.request.headers["X-Shopify-Webhook-Id"]
+            if (shopifyEventId != null && !processedEvents.markIfNew("shopify", shopifyEventId)) {
+                call.respond(HttpStatusCode.OK, mapOf("status" to "duplicate_ignored"))
+                return@post
+            }
+
             result.emittedEvent?.let { soldEvent ->
                 val keyStr = soldEvent.productKey.value
-                val inv = AppStore.inventory[keyStr]
-                if (inv != null) {
-                    val updatedInv = inv.recordSale(soldEvent.quantity)
-                    AppStore.inventory[keyStr] = updatedInv
-
+                val updatedInv = synchronized(AppStore.inventory) {
+                    AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)?.also { AppStore.inventory[keyStr] = it }
+                }
+                if (updatedInv != null) {
                     runBlocking {
                         antiOversellSaga.executeRetractionSaga(
                             productKey = soldEvent.productKey,
@@ -400,11 +608,36 @@ fun Application.module() {
         }
 
         post("/webhooks/meta") {
-            val bodyText = call.receiveText()
-            val inboundEvents = metaWebhookReceiver.parseInboundPayload(bodyText)
+            val bodyBytes = call.receive<ByteArray>()
+
+            // Firma HMAC de Meta: si hay App Secret configurado, se exige y se rechaza lo que no cuadre.
+            val appSecret = AppConfig.metaAppSecret
+            if (appSecret.isBlank() && AppConfig.requireMetaSignature) {
+                call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Webhook deshabilitado: falta META_APP_SECRET"))
+                return@post
+            }
+            if (appSecret.isNotBlank()) {
+                val signature = call.request.headers["X-Hub-Signature-256"]
+                if (!metaWebhookReceiver.verifySignature(bodyBytes, signature, appSecret)) {
+                    call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Firma X-Hub-Signature-256 inválida"))
+                    return@post
+                }
+            }
+
+            val inboundEvents = metaWebhookReceiver.parseInboundPayload(bodyBytes.toString(Charsets.UTF_8))
 
             for (event in inboundEvents) {
-                println("Mensaje entrante de [${event.channel}] de ${event.senderId}: ${event.text}")
+                // Idempotencia: Meta puede reentregar el mismo mensaje.
+                if (!processedEvents.markIfNew(event.channel, event.messageId)) continue
+                pipelineScope.launch {
+                    try {
+                        recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        System.err.println("Error procesando mensaje de [${event.channel}] ${event.senderId}: ${e.message}")
+                    }
+                }
             }
 
             call.respond(HttpStatusCode.OK, mapOf("status" to "EVENT_RECEIVED"))
@@ -413,13 +646,13 @@ fun Application.module() {
         // 7. Vitrina Pública
         get("/public/p/{key}") {
             val key = call.parameters["key"] ?: ""
-            val product = AppStore.products[key]
+            val product = synchronized(AppStore.products) { AppStore.products[key] }
             if (product == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Producto no encontrado"))
                 return@get
             }
 
-            val inv = AppStore.inventory[key]
+            val inv = synchronized(AppStore.inventory) { AppStore.inventory[key] }
             val isAvailable = inv?.isAvailable ?: false
             val publicDto = product.toPublicDto(isAvailable = isAvailable)
 

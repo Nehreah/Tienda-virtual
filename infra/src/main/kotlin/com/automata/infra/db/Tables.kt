@@ -24,6 +24,14 @@ class JsonbTextColumnType : ColumnType() {
 
 fun Table.jsonbText(name: String): Column<String> = registerColumn<String>(name, JsonbTextColumnType())
 
+/** Idempotencia de webhooks (ver db/migracion_fase3_idempotencia.sql). procesado_en lo pone la base. */
+object EventosProcesadosTable : Table("tienda.eventos_procesados") {
+    val canal = text("canal")
+    val eventoExternoId = text("evento_externo_id")
+
+    override val primaryKey = PrimaryKey(canal, eventoExternoId)
+}
+
 object InventarioTable : Table("tienda.inventario") {
     val key = text("key")
     val item = text("item")

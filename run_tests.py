@@ -1,34 +1,30 @@
-import os, sys, subprocess
+#!/usr/bin/env python3
+"""
+Ejecuta las pruebas REALES del proyecto con Gradle y devuelve su código de salida.
 
-print("=== SUITE COMPLETO DE PRUEBAS DEL AUTÓMATA COMERCIAL MULTICANAL v5.3 ===")
+(Versiones anteriores de este script solo imprimían una lista fija de "✓" y
+"TODOS LOS TEST PASARON" sin ejecutar nada. Eso era engañoso y se eliminó.)
 
-modules = [
-    "shared-kernel", "commerce", "messaging",
-    "adapters-shopify", "adapters-meta", "adapters-channels",
-    "infra", "app"
-]
+Uso:  python run_tests.py            -> todas las pruebas
+      python run_tests.py :app:test  -> solo las del módulo app (o cualquier tarea de Gradle)
+"""
+import os
+import subprocess
+import sys
 
-all_tests = []
-for m in modules:
-    test_dir = os.path.join("/home/nehreah/Tienda", m, "src", "test")
-    if os.path.exists(test_dir):
-        for root, dirs, files in os.walk(test_dir):
-            for f in files:
-                if f.endswith("Test.kt"):
-                    all_tests.append((m, f))
+root = os.path.dirname(os.path.abspath(__file__))
+gradlew = os.path.join(root, "gradlew.bat" if os.name == "nt" else "gradlew")
+tasks = sys.argv[1:] or ["test"]
 
-print(f"\n[OK] Se encontraron {len(all_tests)} clases de prueba unitarias e integración:")
-for mod, tfile in all_tests:
-    print(f"  - [{mod}] {tfile}")
+if not os.path.exists(gradlew):
+    print(f"No se encontró {gradlew}. Ejecuta este script desde la raíz del proyecto.")
+    sys.exit(2)
 
-print("\nResultados de Verificación de Invariantes:")
-print("  ✓ SecurityFugaTest: 0 Fugas de PM, Costo o Margen en DTOs o Respuestas Públicas")
-print("  ✓ NegotiationEngineTest: Invarianza $Precio >= L4 >= PM verificada (Property Testing)")
-print("  ✓ ChannelPricingServiceTest: Precio con comisiones no cae por debajo del PM")
-print("  ✓ AntiOversellSagaTest: Retiro multicanal instantáneo ante venta confirmada")
-print("  ✓ ShopifyHmacTest: Verificación criptográfica HMAC SHA-256 en Webhooks")
-print("  ✓ MetaWebhookReceiverTest: Handshake hub.challenge y parseo de mensajes de WhatsApp/IG/Messenger")
-print("  ✓ CapabilityDetectorTest: Autodetección del modo CATALOG_ONLY en Colombia y LATAM")
-print("  ✓ ExcelGeneratorTest: Generación y parseo sin errores del Excel v2 (NEGOCIO.xlsx)")
+print("=== Ejecutando pruebas con Gradle:", " ".join(tasks), "===")
+result = subprocess.run([gradlew, *tasks, "--console=plain"], cwd=root)
 
-print("\n=== TODOS LOS TEST PASARON EXITOSAMENTE ===")
+if result.returncode == 0:
+    print("\n=== Gradle terminó SIN errores ===")
+else:
+    print(f"\n=== Gradle terminó con errores (código {result.returncode}). Revisa la salida de arriba. ===")
+sys.exit(result.returncode)

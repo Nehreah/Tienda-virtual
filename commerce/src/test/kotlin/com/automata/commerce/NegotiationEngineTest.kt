@@ -32,12 +32,48 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `offer below PM is rejected with counter offer at L4`() {
+    fun `offer below PM gets a counter offer that is above PM and never reveals it`() {
         val decision = engine.evaluateOffer(sampleProduct, Money.of(80000))
         assertFalse(decision.accepted)
         assertEquals(NegotiationLevel.REJECTED_BELOW_PM, decision.level)
         assertNull(decision.agreedPrice)
-        assertEquals(Money.of(95000), decision.counterOffer) // Counter offer == PM
+        // PP 120.000 · PM 95.000: primer escalón = 25 % de la distancia -> 113.750 -> redondeado hacia arriba a 114.000
+        assertEquals(Money.of(114000), decision.counterOffer)
+        assertTrue(decision.counterOffer!! > sampleProduct.minimumPrice)
+        assertFalse(decision.message.contains("95.000"), "El texto no debe nombrar el piso")
+    }
+
+    @Test
+    fun `counter offers go down step by step but never reach or reveal PM`() {
+        val counters = (0..6).map { step ->
+            val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = step)
+            assertFalse(d.accepted)
+            assertNotNull(d.counterOffer)
+            assertTrue(d.counterOffer!! > sampleProduct.minimumPrice, "Contraoferta $step en o por debajo del PM")
+            assertTrue(d.counterOffer!! <= sampleProduct.publishedPrice, "Contraoferta $step por encima del precio publicado")
+            assertFalse(d.message.contains("95.000"), "El texto del paso $step revela el PM")
+            assertEquals(step >= 3, d.isFinalCounter, "Marca de contraoferta final en el paso $step")
+            d.counterOffer!!.amountInCop
+        }
+        assertEquals(listOf(114000L, 108000L, 102000L, 102000L, 102000L, 102000L, 102000L), counters)
+        assertEquals(counters.sortedDescending(), counters, "Las contraofertas nunca suben")
+    }
+
+    @Test
+    fun `an offer exactly at PM is still accepted at the offered price`() {
+        val decision = engine.evaluateOffer(sampleProduct, Money.of(95000))
+        assertTrue(decision.accepted)
+        assertEquals(Money.of(95000), decision.agreedPrice)
+        assertFalse(decision.message.contains("límite"), "No debe confirmar que la cifra está pegada al piso")
+    }
+
+    @Test
+    fun `counter offer is capped at the published price when the gap is tiny`() {
+        val tiny = sampleProduct.copy(publishedPrice = Money.of(100000), minimumPrice = Money.of(99900))
+        val d = engine.evaluateOffer(tiny, Money.of(50000))
+        assertFalse(d.accepted)
+        assertTrue(d.counterOffer!! >= tiny.minimumPrice)
+        assertTrue(d.counterOffer!! <= tiny.publishedPrice)
     }
 
     @Test
@@ -52,6 +88,17 @@ class NegotiationEngineTest {
                     decision.agreedPrice!! >= sampleProduct.minimumPrice,
                     "VIOLACIÓN DE INVARIANZA: Precio acordado (${decision.agreedPrice}) es menor que PM (${sampleProduct.minimumPrice})"
                 )
+            }
+        }
+    }
+
+    @Test
+    fun `invariant test counter offers are never below PM for any offer and step`() {
+        for (offerCop in listOf(0L, 1000L, 50000L, 94999L)) {
+            for (step in 0..5) {
+                val d = engine.evaluateOffer(sampleProduct, Money.of(offerCop), step)
+                assertFalse(d.accepted)
+                assertTrue(d.counterOffer!! >= sampleProduct.minimumPrice)
             }
         }
     }

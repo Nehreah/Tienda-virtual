@@ -26,11 +26,36 @@ class MetaWebhookReceiver(
         return null
     }
 
+    /**
+     * Verifica la cabecera X-Hub-Signature-256 ("sha256=<hex>") = HMAC-SHA256 del cuerpo CRUDO
+     * con el App Secret. Comparación en tiempo constante. Falla cerrado si falta algo.
+     */
+    fun verifySignature(rawBody: ByteArray, signatureHeader: String?, appSecret: String): Boolean {
+        if (appSecret.isBlank() || signatureHeader.isNullOrBlank()) return false
+        val prefix = "sha256="
+        if (!signatureHeader.startsWith(prefix)) return false
+        val provided = signatureHeader.removePrefix(prefix).trim().lowercase()
+        return try {
+            val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+            mac.init(javax.crypto.spec.SecretKeySpec(appSecret.toByteArray(Charsets.UTF_8), "HmacSHA256"))
+            val expected = mac.doFinal(rawBody).joinToString("") { "%02x".format(it) }
+            java.security.MessageDigest.isEqual(
+                expected.toByteArray(Charsets.UTF_8),
+                provided.toByteArray(Charsets.UTF_8)
+            )
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     fun parseInboundPayload(rawJsonBody: String): List<InboundMessageEvent> {
         val events = mutableListOf<InboundMessageEvent>()
         try {
             val json = Json.parseToJsonElement(rawJsonBody).jsonObject
             val entries = json["entry"]?.jsonArray ?: return emptyList()
+            // Meta indica la plataforma en el campo raíz "object":
+            // "whatsapp_business_account" | "instagram" | "page" (Messenger).
+            val platformObject = json["object"]?.jsonPrimitive?.content
 
             for (entryElement in entries) {
                 val entry = entryElement.jsonObject
@@ -45,7 +70,8 @@ class MetaWebhookReceiver(
                         for (msgElement in messages) {
                             val msg = msgElement.jsonObject
                             val from = msg["from"]?.jsonPrimitive?.content ?: continue
-                            val msgId = msg["id"]?.jsonPrimitive?.content ?: "msg_id"
+                            // Sin id no se puede deduplicar: se descarta el evento.
+                            val msgId = msg["id"]?.jsonPrimitive?.content ?: continue
                             val text = msg["text"]?.jsonObject?.get("body")?.jsonPrimitive?.content
                                 ?: msg["interactive"]?.jsonObject?.get("button_reply")?.jsonObject?.get("title")?.jsonPrimitive?.content
                                 ?: ""
@@ -58,14 +84,17 @@ class MetaWebhookReceiver(
                 // 2. Instagram & Messenger Format
                 val messaging = entry["messaging"]?.jsonArray
                 if (messaging != null) {
-                    val isInstagram = entry.containsKey("id") && entry["id"]?.jsonPrimitive?.content?.startsWith("ig_") == true
-                    val channel = if (isInstagram) "instagram" else "messenger"
+                    // El canal lo define el campo "object" del webhook, no el formato del id.
+                    val channel = if (platformObject == "instagram") "instagram" else "messenger"
 
                     for (mElement in messaging) {
                         val mObj = mElement.jsonObject
                         val senderId = mObj["sender"]?.jsonObject?.get("id")?.jsonPrimitive?.content ?: continue
                         val message = mObj["message"]?.jsonObject ?: continue
-                        val msgId = message["mid"]?.jsonPrimitive?.content ?: "mid_id"
+                        // Los "ecos" son copias de lo que la propia página envió: no son mensajes del cliente.
+                        if (message["is_echo"]?.jsonPrimitive?.booleanOrNull == true) continue
+                        // Sin mid no se puede deduplicar: se descarta el evento.
+                        val msgId = message["mid"]?.jsonPrimitive?.content ?: continue
                         val text = message["text"]?.jsonPrimitive?.content ?: ""
 
                         events.add(InboundMessageEvent(channel, senderId, msgId, text, System.currentTimeMillis()))

@@ -40,7 +40,7 @@ object DashboardRenderer {
 
             """
             <tr class="hover:bg-gray-50 border-b transition text-sm">
-                <td class="px-4 py-3 font-mono font-semibold text-indigo-700">${p.key.value}</td>
+                <td class="px-4 py-3 font-mono font-semibold text-indigo-700">${escapeHtml(p.key.value)}</td>
                 <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(p.itemName)}</td>
                 <td class="px-4 py-3 text-gray-600">${escapeHtml(p.brand)}</td>
                 <td class="px-4 py-3 text-right font-semibold text-gray-900">${p.publishedPrice.formatFormattedCop()}</td>
@@ -101,10 +101,10 @@ object DashboardRenderer {
         // Filas para la tabla de Chats y Tratos
         val chatDealRowsHtml = chatDeals.joinToString("\n") { chat ->
             val (badgeClass, badgeText) = when (chat.dealState) {
-                DealState.TRATO_CERRADO -> "bg-emerald-100 text-emerald-800 border-emerald-300" to "✓ ${chat.dealStateLabel}"
-                DealState.PENDIENTE_ENVIO -> "bg-blue-100 text-blue-800 border-blue-300" to "📦 ${chat.dealStateLabel}"
-                DealState.EN_NEGOCIACION -> "bg-amber-100 text-amber-800 border-amber-300" to "⏳ ${chat.dealStateLabel}"
-                DealState.CANCELADO -> "bg-rose-100 text-rose-800 border-rose-300" to "✕ ${chat.dealStateLabel}"
+                DealState.TRATO_CERRADO -> "bg-emerald-100 text-emerald-800 border-emerald-300" to "✓ ${escapeHtml(chat.dealStateLabel)}"
+                DealState.PENDIENTE_ENVIO -> "bg-blue-100 text-blue-800 border-blue-300" to "📦 ${escapeHtml(chat.dealStateLabel)}"
+                DealState.EN_NEGOCIACION -> "bg-amber-100 text-amber-800 border-amber-300" to "⏳ ${escapeHtml(chat.dealStateLabel)}"
+                DealState.CANCELADO -> "bg-rose-100 text-rose-800 border-rose-300" to "✕ ${escapeHtml(chat.dealStateLabel)}"
             }
 
             val channelBadge = when (chat.channel.lowercase()) {
@@ -116,18 +116,18 @@ object DashboardRenderer {
             }
 
             """
-            <tr class="hover:bg-gray-50 border-b transition text-sm chat-row" data-channel="${chat.channel}">
-                <td class="px-4 py-3 font-mono text-xs font-semibold text-gray-500">${chat.id}</td>
+            <tr class="hover:bg-gray-50 border-b transition text-sm chat-row" data-channel="${escapeHtml(chat.channel)}">
+                <td class="px-4 py-3 font-mono text-xs font-semibold text-gray-500">${escapeHtml(chat.id)}</td>
                 <td class="px-4 py-3">$channelBadge</td>
                 <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(chat.customer)}</td>
                 <td class="px-4 py-3 text-gray-700">${escapeHtml(chat.productName)}</td>
-                <td class="px-4 py-3 text-right font-bold text-gray-900">${chat.offeredPrice}</td>
+                <td class="px-4 py-3 text-right font-bold text-gray-900">${escapeHtml(chat.offeredPrice)}</td>
                 <td class="px-4 py-3 text-center">
                     <span class="px-2.5 py-1 text-xs font-bold rounded-full border inline-block $badgeClass">
                         $badgeText
                     </span>
                 </td>
-                <td class="px-4 py-3 text-right text-xs text-gray-400">${chat.timestamp}</td>
+                <td class="px-4 py-3 text-right text-xs text-gray-400">${escapeHtml(chat.timestamp)}</td>
             </tr>
             """.trimIndent()
         }
@@ -569,5 +569,6 @@ object DashboardRenderer {
             .replace("<", "&lt;")
             .replace(">", "&gt;")
             .replace("\"", "&quot;")
+            .replace("'", "&#39;")
     }
 }

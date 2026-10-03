@@ -9,13 +9,13 @@ import io.ktor.http.*
 import kotlinx.serialization.json.*
 
 /**
- * Adaptador de Producción para WhatsApp Business Cloud API (Graph API v18.0+).
+ * Adaptador de Producción para WhatsApp Business Cloud API (Graph API).
  * Maneja el envío de mensajes de texto, tarjetas interactivas de producto y plantillas de 24h.
  */
 class WhatsAppMessagingAdapter(
     private val phoneNumberId: String,
     private val accessToken: String,
-    private val apiVersion: String = "v18.0",
+    private val apiVersion: String,
     private val httpClient: HttpClient = HttpClient()
 ) : MessagingPort {
 

@@ -17,7 +17,7 @@ data class Money(val amountInCop: Long) : Comparable<Money> {
     operator fun plus(other: Money): Money = Money(amountInCop + other.amountInCop)
     operator fun minus(other: Money): Money = Money(amountInCop - other.amountInCop)
     
-    fun formatFormattedCop(): String = "$${String.format("%,d", amountInCop).replace(',', '.')}"
+    fun formatFormattedCop(): String = "$${String.format(java.util.Locale.US, "%,d", amountInCop).replace(',', '.')}"
 
     companion object {
         val ZERO = Money(0)
