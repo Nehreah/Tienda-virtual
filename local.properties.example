@@ -3,9 +3,11 @@
 # NUNCA subas 'local.properties' al repositorio.
 
 PORT=8080
-DATABASE_URL=jdbc:h2:mem:automata_db;DB_CLOSE_DELAY=-1
-DATABASE_USER=sa
-DATABASE_PASSWORD=
+# Base de datos: Supabase (PostgreSQL). Copia el valor exacto desde Supabase -> botón "Connect"
+# -> Session pooler (IPv4, puerto 5432). H2 ya no sirve: el esquema "tienda" es de PostgreSQL.
+DATABASE_URL=jdbc:postgresql://aws-0-REGION.pooler.supabase.com:5432/postgres?sslmode=require
+DATABASE_USER=postgres.ID_DEL_PROYECTO
+DATABASE_PASSWORD=cambiar_esta_clave
 
 # Shopify GraphQL Admin API & Webhooks
 SHOPIFY_SHOP_DOMAIN=tu-tienda.myshopify.com

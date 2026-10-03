@@ -1,89 +1,110 @@
 package com.automata.infra.excel
 
+import com.automata.commerce.model.InventarioItem
+import com.automata.commerce.service.FinancialMath
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileOutputStream
+import java.io.OutputStream
 
 object ExcelGenerator {
-    fun generateSampleWorkbook(outputFile: File) {
+
+    fun generateWorkbookFromItems(items: List<InventarioItem>, outputStream: OutputStream) {
         val workbook = XSSFWorkbook()
 
         // 1. Hoja Inventario
         val invSheet = workbook.createSheet("Inventario")
         val invHeaders = listOf(
             "Key", "Item name", "PP", "PM", "Costo", "Ganancia", "ROI/Margen",
-            "Estado", "Link", "Fotos", "Descripción AB", "Cantidad disponible"
+            "Estado", "Link", "Fotos", "Descripción AB", "Fecha Compra", "Fecha Venta", "Vendido En"
         )
         val hRow = invSheet.createRow(0)
         invHeaders.forEachIndexed { i, h -> hRow.createCell(i).setCellValue(h) }
 
-        val sampleData = listOf(
-            listOf("PROD-001", "Audífonos Bluetooth Pro ANC", "$120.000", "$95.000", "$70.000", "$50.000", "41%", "Activo", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e", "Audífonos inalámbricos con cancelación activa de ruido.", "20"),
-            listOf("PROD-002", "Reloj Inteligente Sport GPS", "$250.000", "$210.000", "$150.000", "$100.000", "40%", "Activo", "https://images.unsplash.com/photo-1523275335684-37898b6baf30", "https://images.unsplash.com/photo-1523275335684-37898b6baf30", "Smartwatch con monitor cardíaco y resistencia 5 ATM.", "15"),
-            listOf("PROD-003", "Cámara de Acción 4K Ultra", "$450.000", "$390.000", "$300.000", "$150.000", "33%", "Activo", "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f", "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f", "Cámara deportiva 4K Sumergible con estabilización.", "10")
-        )
-
-        sampleData.forEachIndexed { rIdx, rowData ->
+        items.forEachIndexed { rIdx, item ->
             val row = invSheet.createRow(rIdx + 1)
-            rowData.forEachIndexed { cIdx, valStr -> row.createCell(cIdx).setCellValue(valStr) }
+            val ppStr = item.precioPublicado?.formatFormattedCop() ?: ""
+            val pmStr = item.precioMinimo?.formatFormattedCop() ?: ""
+            val costoStr = item.costoCompraReparacion.formatFormattedCop()
+
+            val ganancia = if (item.estaVendido && item.vendidoEn != null) {
+                FinancialMath.gananciaNeta(item.vendidoEn!!, item.costoCompraReparacion)
+            } else if (item.precioPublicado != null) {
+                FinancialMath.gananciaNeta(item.precioPublicado!!, item.costoCompraReparacion)
+            } else null
+
+            val gananciaStr = ganancia?.format() ?: ""
+            val roi = ganancia?.let { FinancialMath.roi(it, item.costoCompraReparacion) }
+            val roiStr = roi?.let { "%.1f%%".format(it * 100) } ?: ""
+
+            row.createCell(0).setCellValue(item.key.value)
+            row.createCell(1).setCellValue(item.item)
+            row.createCell(2).setCellValue(ppStr)
+            row.createCell(3).setCellValue(pmStr)
+            row.createCell(4).setCellValue(costoStr)
+            row.createCell(5).setCellValue(gananciaStr)
+            row.createCell(6).setCellValue(roiStr)
+            row.createCell(7).setCellValue(item.estado.etiqueta)
+            row.createCell(8).setCellValue(item.link ?: "")
+            row.createCell(9).setCellValue(item.fotos.joinToString("\n"))
+            row.createCell(10).setCellValue(item.descripcion ?: "")
+            row.createCell(11).setCellValue(item.fechaCompra?.toString() ?: "")
+            row.createCell(12).setCellValue(item.fechaVenta?.toString() ?: "")
+            row.createCell(13).setCellValue(item.vendidoEn?.formatFormattedCop() ?: "")
         }
 
-        // 2. Hoja Publicacion
-        val pubSheet = workbook.createSheet("Publicacion")
-        val pubHeaders = listOf("Key", "Marca", "Condición", "SKU interno", "GTIN / EAN", "MPN", "Categoría interna", "Atributos", "Garantía (meses)", "Foto 1")
-        val pubHRow = pubSheet.createRow(0)
-        pubHeaders.forEachIndexed { i, h -> pubHRow.createCell(i).setCellValue(h) }
-
-        val pubSampleData = listOf(
-            listOf("PROD-001", "AudioTech", "Nuevo", "SKU-AT001", "7701234567890", "AT-BTPRO", "Electrónica", "color:negro;conexion:bluetooth", "12", "https://images.unsplash.com/photo-1505740420928-5e560c06d30e"),
-            listOf("PROD-002", "TechWear", "Nuevo", "SKU-TW002", "7709876543210", "TW-WATCH", "Deportes", "color:plata;pantalla:amoled", "12", "https://images.unsplash.com/photo-1523275335684-37898b6baf30"),
-            listOf("PROD-003", "CamPro", "Nuevo", "SKU-CP003", "7705554443322", "CP-4KULT", "Fotografía", "resolucion:4k;fps:60", "24", "https://images.unsplash.com/photo-1526170375885-4d8ecf77b99f")
-        )
-
-        pubSampleData.forEachIndexed { rIdx, rowData ->
-            val row = pubSheet.createRow(rIdx + 1)
-            rowData.forEachIndexed { cIdx, valStr -> row.createCell(cIdx).setCellValue(valStr) }
-        }
-
-        // 3. Hoja Canales
-        val canSheet = workbook.createSheet("Canales")
-        val canHeaders = listOf("Key", "Canal", "Publicar", "Título para el canal", "Categoría del canal", "Precio del canal")
-        val canHRow = canSheet.createRow(0)
-        canHeaders.forEachIndexed { i, h -> canHRow.createCell(i).setCellValue(h) }
-
-        val canSampleData = listOf(
-            listOf("PROD-001", "shopify", "SI", "Audífonos Bluetooth Pro ANC AudioTech", "Audio", "120000"),
-            listOf("PROD-001", "meta_catalogo", "SI", "Audífonos Bluetooth Pro ANC", "Audio", "120000"),
-            listOf("PROD-002", "shopify", "SI", "Smartwatch TechWear Sport GPS 5ATM", "Relojes", "250000"),
-            listOf("PROD-002", "meta_catalogo", "SI", "Reloj Inteligente Sport GPS", "Relojes", "250000"),
-            listOf("PROD-003", "shopify", "SI", "Cámara 4K CamPro Ultra Sumergible", "Cámaras", "450000"),
-            listOf("PROD-003", "meta_catalogo", "SI", "Cámara de Acción 4K Ultra", "Cámaras", "450000")
-        )
-
-        canSampleData.forEachIndexed { rIdx, rowData ->
-            val row = canSheet.createRow(rIdx + 1)
-            rowData.forEachIndexed { cIdx, valStr -> row.createCell(cIdx).setCellValue(valStr) }
-        }
-
-        // 4. Hoja Config
+        // 2. Hoja Config
         val cfgSheet = workbook.createSheet("Config")
         val cfgHeaders = listOf("Condiciones", "Estados", "Canales")
         val cfgHRow = cfgSheet.createRow(0)
         cfgHeaders.forEachIndexed { i, h -> cfgHRow.createCell(i).setCellValue(h) }
         cfgSheet.createRow(1).apply {
             createCell(0).setCellValue("Nuevo")
-            createCell(1).setCellValue("Activo")
+            createCell(1).setCellValue("Comprado")
             createCell(2).setCellValue("shopify")
         }
         cfgSheet.createRow(2).apply {
             createCell(0).setCellValue("Reacondicionado")
-            createCell(1).setCellValue("Inactivo")
+            createCell(1).setCellValue("Publicado")
             createCell(2).setCellValue("meta_catalogo")
         }
 
-        FileOutputStream(outputFile).use { fos ->
-            workbook.write(fos)
-        }
+        workbook.write(outputStream)
         workbook.close()
+    }
+
+    fun exportToBytes(items: List<InventarioItem>): ByteArray {
+        val baos = ByteArrayOutputStream()
+        generateWorkbookFromItems(items, baos)
+        return baos.toByteArray()
+    }
+
+    fun generateSampleWorkbook(outputFile: File) {
+        FileOutputStream(outputFile).use { fos ->
+            val sampleItems = listOf(
+                InventarioItem(
+                    key = com.automata.shared.ProductKey("PROD-001"),
+                    item = "Audífonos Bluetooth Pro ANC",
+                    precioPublicado = com.automata.shared.Money.of(120000),
+                    precioMinimo = com.automata.shared.Money.of(95000),
+                    precioCompra = com.automata.shared.Money.of(70000),
+                    costoCompraReparacion = com.automata.shared.Money.of(70000),
+                    estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
+                    descripcion = "Audífonos inalámbricos con cancelación activa de ruido."
+                ),
+                InventarioItem(
+                    key = com.automata.shared.ProductKey("PROD-002"),
+                    item = "Reloj Inteligente Sport GPS",
+                    precioPublicado = com.automata.shared.Money.of(250000),
+                    precioMinimo = com.automata.shared.Money.of(210000),
+                    precioCompra = com.automata.shared.Money.of(150000),
+                    costoCompraReparacion = com.automata.shared.Money.of(150000),
+                    estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
+                    descripcion = "Smartwatch con monitor cardíaco y resistencia 5 ATM."
+                )
+            )
+            generateWorkbookFromItems(sampleItems, fos)
+        }
     }
 }

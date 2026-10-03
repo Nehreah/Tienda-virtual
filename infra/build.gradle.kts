@@ -13,5 +13,7 @@ dependencies {
     implementation("org.jetbrains.exposed:exposed-core:0.47.0")
     implementation("org.jetbrains.exposed:exposed-dao:0.47.0")
     implementation("org.jetbrains.exposed:exposed-jdbc:0.47.0")
+    implementation("org.jetbrains.exposed:exposed-java-time:0.47.0")
+    implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
 }

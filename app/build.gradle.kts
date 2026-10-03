@@ -16,6 +16,7 @@ dependencies {
     implementation(project(":adapters-meta"))
     implementation(project(":adapters-channels"))
     implementation(project(":infra"))
+    implementation("org.jetbrains.exposed:exposed-core:0.47.0")
 
     val ktorVersion = "2.3.8"
     implementation("io.ktor:ktor-server-core:$ktorVersion")

@@ -33,6 +33,12 @@ object AppConfig {
 
     val port: Int get() = get("PORT", "8080").toIntOrNull() ?: 8080
 
+    // Base de datos (Supabase / PostgreSQL). Sin valores por defecto: si falta, la app debe fallar claro.
+    val databaseUrl: String get() = get("DATABASE_URL")
+    val databaseUser: String get() = get("DATABASE_USER")
+    val databasePassword: String get() = get("DATABASE_PASSWORD")
+    val databaseConfigured: Boolean get() = databaseUrl.isNotBlank()
+
     // Shopify Config
     val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN", "tienda-demo.myshopify.com")
     val shopifyAccessToken: String get() = get("SHOPIFY_ACCESS_TOKEN", "shpat_demo123456789")

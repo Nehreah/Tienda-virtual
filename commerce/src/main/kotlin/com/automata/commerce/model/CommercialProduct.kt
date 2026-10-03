@@ -2,6 +2,7 @@ package com.automata.commerce.model
 
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
+import com.automata.shared.SignedCop
 
 /**
  * Entidad de Dominio Comercial (Matriz Comercial Excel).
@@ -25,11 +26,12 @@ data class CommercialProduct(
     val images: List<String> = emptyList(),
     val masterQuantity: Int = 0 // Stock Maestro del Excel
 ) {
-    val profit: Money
-        get() = if (publishedPrice >= cost) publishedPrice - cost else Money.ZERO
+    /** Ganancia sobre el precio publicado. Con signo: si PP < costo es una pérdida (negativa), ya no se oculta. */
+    val profit: SignedCop
+        get() = SignedCop(publishedPrice.amountInCop - cost.amountInCop)
 
     val marginPercentage: Double
-        get() = if (publishedPrice.amountInCop > 0) (profit.amountInCop.toDouble() / publishedPrice.amountInCop.toDouble()) * 100.0 else 0.0
+        get() = if (publishedPrice.amountInCop > 0) (profit.amount.toDouble() / publishedPrice.amountInCop.toDouble()) * 100.0 else 0.0
 
     /**
      * Convierte la entidad interna en un DTO público seguro sin campos sensibles.

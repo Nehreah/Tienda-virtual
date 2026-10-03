@@ -8,11 +8,18 @@ import com.automata.adapters.shopify.ShopifyCatalogAdapter
 import com.automata.adapters.shopify.ShopifyWebhookHandler
 import com.automata.app.dashboard.*
 import com.automata.commerce.model.CommercialProduct
+import com.automata.commerce.model.EstadoItem
+import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.ChannelListingStatus
+import com.automata.commerce.ports.InventarioRepository
 import com.automata.commerce.service.AntiOversellSaga
 import com.automata.commerce.service.NegotiationEngine
 import com.automata.infra.config.AppConfig
+import com.automata.infra.db.DatabaseFactory
+import com.automata.infra.db.ExposedInventarioRepository
+import com.automata.infra.db.Origen
+import com.automata.infra.excel.ExcelGenerator
 import com.automata.infra.excel.ExcelV2Parser
 import com.automata.infra.llm.GeminiLlmAdapter
 import com.automata.messaging.ports.CustomerIntentType
@@ -86,7 +93,7 @@ object AppStore {
                 ApiIntegrationStatus("Instagram DM API", "Mensajería", ApiStatus.FUNCIONAL, "Instagram Account ID: 178414000 • Messaging API Activa", "Hace 5 min"),
                 ApiIntegrationStatus("Facebook Messenger API", "Mensajería", ApiStatus.FUNCIONAL, "Page ID: 1009283741 • Graph API v18.0 Webhooks", "Hace 4 min"),
                 ApiIntegrationStatus("Gemini LLM Engine", "IA & NLP", ApiStatus.FUNCIONAL, "Parsing de Intenciones L0-L4 • gemini-1.5-flash", "Hace 1 min"),
-                ApiIntegrationStatus("Base de Datos Operacional", "Almacenamiento", ApiStatus.FUNCIONAL, "Stock Maestro & Reservas Activas • Invarianza Protegida", "Hace 30 s")
+                ApiIntegrationStatus("Base de Datos Operacional", "Almacenamiento", ApiStatus.FUNCIONAL, "Supabase PostgreSQL / Exposed Repositories", "Hace 30 s")
             )
         )
 
@@ -105,6 +112,15 @@ object AppStore {
 
 fun main() {
     AppStore.seedSampleData()
+    if (AppConfig.databaseConfigured) {
+        println("Conectando a Supabase PostgreSQL...")
+        try {
+            DatabaseFactory.connect()
+            println("Conexión a Supabase establecida correctamente.")
+        } catch (e: Exception) {
+            System.err.println("No se pudo conectar a Supabase: ${e.message}")
+        }
+    }
     val port = AppConfig.port
     println("===============================================================")
     println("  Autómata Comercial Multicanal v5.3 (Código Privado)")
@@ -119,6 +135,11 @@ fun Application.module() {
     install(CORS) { anyHost() }
 
     val negotiationEngine = NegotiationEngine()
+
+    // Supabase Repository (si está configurada la BD)
+    val dbRepository: InventarioRepository? = if (AppConfig.databaseConfigured) {
+        try { ExposedInventarioRepository() } catch (e: Exception) { null }
+    } else null
 
     // Adaptadores E-commerce
     val shopifyAdapter = ShopifyCatalogAdapter(
@@ -225,7 +246,6 @@ fun Application.module() {
                 """.trimIndent()
             }
 
-            // Registrar dinámicamente en el log de chats del Dashboard
             AppStore.chatDeals.add(
                 0,
                 ChatDealLog(
@@ -244,7 +264,7 @@ fun Application.module() {
             call.respondText(responseHtml, ContentType.Text.Html)
         }
 
-        // 3. Subida de Excel v2 Matriz Comercial
+        // 3. Subida / Importación de Excel a Supabase & AppStore
         post("/api/excel/upload") {
             val multipart = call.receiveMultipart()
             var fileBytes: ByteArray? = null
@@ -276,12 +296,62 @@ fun Application.module() {
                 } else {
                     AppStore.inventory[p.key.value] = OperationalInventory(p.key, stockMaestro = p.masterQuantity)
                 }
+
+                // Guardar en Supabase si el repositorio está disponible
+                if (dbRepository != null) {
+                    try {
+                        val item = InventarioItem(
+                            key = p.key,
+                            item = p.itemName,
+                            precioPublicado = p.publishedPrice,
+                            precioMinimo = p.minimumPrice,
+                            precioCompra = p.cost,
+                            costoCompraReparacion = p.cost,
+                            descripcion = p.description,
+                            fotos = p.images,
+                            estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
+                        )
+                        dbRepository.upsert(item, usuario = "sistema", origen = Origen.IMPORT)
+                    } catch (e: Exception) {
+                        System.err.println("Error al guardar ${p.key} en Supabase: ${e.message}")
+                    }
+                }
             }
 
             call.respondRedirect("/")
         }
 
-        // 4. Webhook Shopify HMAC (Order Create / Inventory Update)
+        // 4. Exportación de Datos de Supabase a Excel (.xlsx)
+        get("/api/excel/export") {
+            val items: List<InventarioItem> = if (dbRepository != null) {
+                try {
+                    dbRepository.findAll()
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            } else null ?: AppStore.products.values.map { p ->
+                InventarioItem(
+                    key = p.key,
+                    item = p.itemName,
+                    precioPublicado = p.publishedPrice,
+                    precioMinimo = p.minimumPrice,
+                    precioCompra = p.cost,
+                    costoCompraReparacion = p.cost,
+                    descripcion = p.description,
+                    fotos = p.images,
+                    estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
+                )
+            }
+
+            val excelBytes = ExcelGenerator.exportToBytes(items)
+            call.response.header(
+                HttpHeaders.ContentDisposition,
+                ContentDisposition.Attachment.withParameter(ContentDisposition.Parameters.FileName, "inventario.xlsx").toString()
+            )
+            call.respondBytes(excelBytes, ContentType.Application.OctetStream)
+        }
+
+        // 5. Webhook Shopify HMAC
         post("/webhooks/shopify") {
             val topic = call.request.headers["X-Shopify-Topic"]
             val hmac = call.request.headers["X-Shopify-Hmac-SHA256"]
@@ -315,7 +385,7 @@ fun Application.module() {
             call.respond(HttpStatusCode.OK, mapOf("status" to "processed", "message" to result.message))
         }
 
-        // 5. Webhook Meta (WhatsApp, Instagram DM, Facebook Messenger)
+        // 6. Webhook Meta
         get("/webhooks/meta") {
             val mode = call.request.queryParameters["hub.mode"]
             val token = call.request.queryParameters["hub.verify_token"]
@@ -335,13 +405,12 @@ fun Application.module() {
 
             for (event in inboundEvents) {
                 println("Mensaje entrante de [${event.channel}] de ${event.senderId}: ${event.text}")
-                // Procesar la máquina de estados e intentar evaluar ofertas o responder
             }
 
             call.respond(HttpStatusCode.OK, mapOf("status" to "EVENT_RECEIVED"))
         }
 
-        // 6. Vitrina Pública (SIN FUGAS FINANCIERAS)
+        // 7. Vitrina Pública
         get("/public/p/{key}") {
             val key = call.parameters["key"] ?: ""
             val product = AppStore.products[key]
