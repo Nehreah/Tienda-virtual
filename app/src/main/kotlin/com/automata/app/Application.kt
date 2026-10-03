@@ -11,8 +11,8 @@ import com.automata.app.pipeline.InboundMessagePipeline
 import com.automata.app.pipeline.PipelineCatalog
 import com.automata.app.pipeline.PipelineOutcome
 import com.automata.commerce.model.CommercialProduct
-import com.automata.commerce.model.EstadoItem
 import com.automata.commerce.model.InventarioItem
+import com.automata.commerce.model.EstadoItem
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.ChannelListingStatus
 import com.automata.commerce.ports.InventarioRepository
@@ -131,7 +131,7 @@ object AppStore {
                     when {
                         databaseConnected -> "Supabase PostgreSQL conectada al iniciar"
                         AppConfig.databaseConfigured -> "DATABASE_URL presente pero la conexión falló"
-                        else -> "Sin DATABASE_URL: modo demo en memoria"
+                        else -> "Sin DATABASE_URL: almacenamiento solo en memoria (datos no persisten)"
                     },
                     if (databaseConnected) "Al iniciar" else noCheck
                 )
@@ -139,57 +139,8 @@ object AppStore {
         )
     }
 
-    fun seedSampleData() {
-        val p1 = CommercialProduct(
-            key = ProductKey("PROD-001"),
-            itemName = "Audífonos Bluetooth Pro ANC",
-            publishedPrice = Money.of(120000),
-            minimumPrice = Money.of(95000),
-            cost = Money.of(70000),
-            status = "Activo",
-            description = "Audífonos inalámbricos con cancelación activa de ruido y 30 horas de batería.",
-            brand = "AudioTech",
-            condition = "Nuevo",
-            gtinEan = "7701234567890",
-            mpn = "AT-BTPRO",
-            masterQuantity = 20
-        )
-        val p2 = CommercialProduct(
-            key = ProductKey("PROD-002"),
-            itemName = "Reloj Inteligente Sport GPS",
-            publishedPrice = Money.of(250000),
-            minimumPrice = Money.of(210000),
-            cost = Money.of(150000),
-            status = "Activo",
-            description = "Smartwatch con monitor cardíaco, GPS integrado y resistencia al agua 5 ATM.",
-            brand = "TechWear",
-            condition = "Nuevo",
-            gtinEan = "7709876543210",
-            mpn = "TW-WATCH",
-            masterQuantity = 15
-        )
-
-        products[p1.key.value] = p1
-        products[p2.key.value] = p2
-
-        inventory[p1.key.value] = OperationalInventory(p1.key, stockMaestro = 20, reservasActivas = 2, unidadesVendidas = 3)
-        inventory[p2.key.value] = OperationalInventory(p2.key, stockMaestro = 15, reservasActivas = 1, unidadesVendidas = 2)
-
-        channelMappings[p1.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654321", "meta_catalogo" to "meta_PROD-001")
-        channelMappings[p2.key.value] = mutableMapOf("shopify" to "gid://shopify/Product/987654322", "meta_catalogo" to "meta_PROD-002")
-
-        chatDeals.clear()
-        chatDeals.addAll(
-            listOf(
-                ChatDealLog("CHAT-501", "+57 300 892 4110", "whatsapp", "WhatsApp", "Audífonos Bluetooth Pro ANC", "$110.000 COP", DealState.TRATO_CERRADO, "Trato Realizado (L3)", "Hace 5 min"),
-                ChatDealLog("CHAT-502", "@carlos_tech", "instagram", "Instagram DM", "Reloj Inteligente Sport GPS", "$230.000 COP", DealState.PENDIENTE_ENVIO, "Pendiente de Envío", "Hace 12 min"),
-                ChatDealLog("CHAT-503", "Orden Shopify #1084", "shopify_webhooks", "Shopify Order", "Audífonos Bluetooth Pro ANC", "$120.000 COP", DealState.PENDIENTE_ENVIO, "Pendiente de Envío", "Hace 25 min"),
-                ChatDealLog("CHAT-504", "Laura Gómez", "messenger", "Messenger", "Audífonos Bluetooth Pro ANC", "$60.000 COP", DealState.CANCELADO, "Cancelado / Rechazado (< PM)", "Hace 40 min"),
-                ChatDealLog("CHAT-505", "+57 315 776 2201", "whatsapp", "WhatsApp", "Reloj Inteligente Sport GPS", "$220.000 COP", DealState.EN_NEGOCIACION, "En Negociación (L2)", "Hace 2 min")
-            )
-        )
-    }
 }
+
 
 /** Expone AppStore al pipeline de mensajes con acceso sincronizado (el pipeline corre en otras corrutinas). */
 object AppStoreCatalog : PipelineCatalog {
@@ -248,7 +199,6 @@ private suspend fun ApplicationCall.requireDashboardAuth(auth: DashboardAuth): B
 }
 
 fun main() {
-    AppStore.seedSampleData()
     if (AppConfig.databaseConfigured) {
         println("Conectando a Supabase PostgreSQL...")
         try {

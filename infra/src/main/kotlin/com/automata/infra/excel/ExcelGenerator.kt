@@ -4,8 +4,6 @@ import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.service.FinancialMath
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
 import java.io.ByteArrayOutputStream
-import java.io.File
-import java.io.FileOutputStream
 import java.io.OutputStream
 
 object ExcelGenerator {
@@ -80,31 +78,5 @@ object ExcelGenerator {
         return baos.toByteArray()
     }
 
-    fun generateSampleWorkbook(outputFile: File) {
-        FileOutputStream(outputFile).use { fos ->
-            val sampleItems = listOf(
-                InventarioItem(
-                    key = com.automata.shared.ProductKey("PROD-001"),
-                    item = "Audífonos Bluetooth Pro ANC",
-                    precioPublicado = com.automata.shared.Money.of(120000),
-                    precioMinimo = com.automata.shared.Money.of(95000),
-                    precioCompra = com.automata.shared.Money.of(70000),
-                    costoTotal = com.automata.shared.Money.of(70000),
-                    estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
-                    descripcion = "Audífonos inalámbricos con cancelación activa de ruido."
-                ),
-                InventarioItem(
-                    key = com.automata.shared.ProductKey("PROD-002"),
-                    item = "Reloj Inteligente Sport GPS",
-                    precioPublicado = com.automata.shared.Money.of(250000),
-                    precioMinimo = com.automata.shared.Money.of(210000),
-                    precioCompra = com.automata.shared.Money.of(150000),
-                    costoTotal = com.automata.shared.Money.of(150000),
-                    estado = com.automata.commerce.model.EstadoItem.PUBLICADO,
-                    descripcion = "Smartwatch con monitor cardíaco y resistencia 5 ATM."
-                )
-            )
-            generateWorkbookFromItems(sampleItems, fos)
-        }
-    }
 }
+

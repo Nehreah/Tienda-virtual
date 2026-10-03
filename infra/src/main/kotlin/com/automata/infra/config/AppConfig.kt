@@ -40,15 +40,15 @@ object AppConfig {
     val databaseConfigured: Boolean get() = databaseUrl.isNotBlank()
 
     // Shopify Config
-    val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN", "tienda-demo.myshopify.com")
-    val shopifyAccessToken: String get() = get("SHOPIFY_ACCESS_TOKEN", "shpat_demo123456789")
-    val shopifyWebhookSecret: String get() = get("SHOPIFY_WEBHOOK_SECRET", "secret_webhook_123")
+    val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN")
+    val shopifyAccessToken: String get() = get("SHOPIFY_ACCESS_TOKEN")
+    val shopifyWebhookSecret: String get() = get("SHOPIFY_WEBHOOK_SECRET")
 
     // Meta Catalog & Shop Config
-    val metaCatalogId: String get() = get("META_CATALOG_ID", "meta_cat_123")
-    val metaAccessToken: String get() = get("META_ACCESS_TOKEN", "meta_token_123")
+    val metaCatalogId: String get() = get("META_CATALOG_ID")
+    val metaAccessToken: String get() = get("META_ACCESS_TOKEN")
     val metaCountryCode: String get() = get("META_COUNTRY_CODE", "CO")
-    val metaWebhookVerifyToken: String get() = get("META_WEBHOOK_VERIFY_TOKEN", "verify_token_123")
+    val metaWebhookVerifyToken: String get() = get("META_WEBHOOK_VERIFY_TOKEN")
 
     // Versión de la Graph API de Meta (WhatsApp, Instagram, Messenger). Centralizada aquí para
     // poder actualizarla sin tocar los adaptadores. Verifica la vigente en developers.facebook.com/docs/graph-api/changelog
@@ -58,11 +58,11 @@ object AppConfig {
     val metaGraphApiVersion: String get() = get("META_GRAPH_API_VERSION", "v26.0")
 
     // WhatsApp Cloud API Config
-    val whatsappPhoneNumberId: String get() = get("WHATSAPP_PHONE_NUMBER_ID", "100123456789")
-    val whatsappAccessToken: String get() = get("WHATSAPP_ACCESS_TOKEN", "EAAG_whatsapp_token_123")
+    val whatsappPhoneNumberId: String get() = get("WHATSAPP_PHONE_NUMBER_ID")
+    val whatsappAccessToken: String get() = get("WHATSAPP_ACCESS_TOKEN")
 
     // Instagram & Messenger Config
-    val metaPageId: String get() = get("META_PAGE_ID", "page_123456789")
+    val metaPageId: String get() = get("META_PAGE_ID")
 
     // Texto que el bot envía al cliente tras reservar (cómo pagar). Configúralo con tus datos reales.
     val paymentInstructions: String get() = get("PAYMENT_INSTRUCTIONS", "Un asesor te enviará los datos de pago en breve.")

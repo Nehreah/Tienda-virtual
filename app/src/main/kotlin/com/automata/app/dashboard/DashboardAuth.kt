@@ -6,7 +6,7 @@ import java.util.Base64
 // Autenticacion HTTP Basic opcional para el tablero y las rutas /api/...
 //
 // - Si [password] esta vacio, la proteccion esta DESACTIVADA y todo pasa
-//   (modo local/demo; la app avisa por consola).
+//   (sin contrasena; la app avisa por consola).
 // - Si tiene valor, cada peticion debe traer: Authorization: Basic base64(usuario:clave)
 //
 // Los webhooks y la vitrina publica NO pasan por aqui:
