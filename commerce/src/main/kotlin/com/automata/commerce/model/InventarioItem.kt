@@ -35,6 +35,10 @@ data class InventarioItem(
     val costoTotal: Money = Money.ZERO,   // antes costoCompraReparacion
     val descripcion: String? = null,
     val tipo: String? = null,             // reemplaza a tienda.clasificacion
+    val marca: String? = null,
+    val condicion: String? = null,
+    val cantidad: Int = 1,
+    val ubicacion: String? = null,
     val requiereReparacion: Boolean = false,
     val reparte: ReparteSocios = ReparteSocios.SIN_DEFINIR,   // reemplaza a tienda.inversion
     val canalVenta: String? = null        // reemplaza a tienda.canal_venta

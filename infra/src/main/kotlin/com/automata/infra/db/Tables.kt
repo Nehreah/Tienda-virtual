@@ -52,6 +52,10 @@ object InventarioTable : Table("tienda.inventario") {
     val pctJavier = decimal("pct_javier", 5, 2)
     val costoTotal = long("costo_total").databaseGenerated()    // antes costo_compra_reparacion; lo mantiene el trigger
     val descripcion = text("descripcion").nullable()
+    val marca = text("marca").nullable()
+    val condicion = text("condicion").nullable()
+    val cantidad = integer("cantidad").default(1)
+    val ubicacion = text("ubicacion").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }

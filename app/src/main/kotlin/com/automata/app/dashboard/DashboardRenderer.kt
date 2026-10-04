@@ -42,7 +42,12 @@ object DashboardRenderer {
             <tr class="hover:bg-gray-50 border-b transition text-sm">
                 <td class="px-4 py-3 font-mono font-semibold text-indigo-700">${escapeHtml(p.key.value)}</td>
                 <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(p.itemName)}${if (!p.isActive) " <span class='ml-2 px-2 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-700'>INACTIVO</span>" else ""}</td>
-                <td class="px-4 py-3 text-gray-600">${escapeHtml(p.brand)}</td>
+                <td class="px-4 py-3 text-gray-600">
+                    <span class="font-semibold text-gray-800">${escapeHtml(p.brand)}</span>
+                    ${if (p.category.isNotBlank() && p.category != "General") "<br/><span class='text-xs text-gray-400'>" + escapeHtml(p.category) + "</span>" else ""}
+                </td>
+                <td class="px-4 py-3 text-gray-600 text-xs">${escapeHtml(p.condition)}</td>
+                <td class="px-4 py-3 text-gray-600 text-xs font-mono">${escapeHtml(p.location ?: "-")}</td>
                 <td class="px-4 py-3 text-right font-semibold text-gray-900">${p.publishedPrice.formatFormattedCop()}</td>
                 <td class="px-4 py-3 text-center">
                     <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
@@ -363,7 +368,9 @@ object DashboardRenderer {
                                     <tr class="bg-gray-100 text-xs font-semibold text-gray-600 uppercase border-b">
                                         <th class="px-4 py-3">Key</th>
                                         <th class="px-4 py-3">Producto</th>
-                                        <th class="px-4 py-3">Marca</th>
+                                        <th class="px-4 py-3">Marca / Tipo</th>
+                                        <th class="px-4 py-3">Condición</th>
+                                        <th class="px-4 py-3">Ubicación</th>
                                         <th class="px-4 py-3 text-right">Precio Pub (PP)</th>
                                         <th class="px-4 py-3 text-center">Stock Maestro</th>
                                         <th class="px-4 py-3 text-center">Stock Vivo BD</th>

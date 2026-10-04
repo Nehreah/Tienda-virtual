@@ -310,15 +310,19 @@ fun main() {
                     cost = item.precioCompra,
                     status = item.estado.etiqueta,
                     description = item.descripcion ?: "",
-                    brand = "",
-                    images = item.fotos
+                    brand = item.marca ?: "",
+                    condition = item.condicion ?: "Nuevo",
+                    category = item.tipo ?: "General",
+                    location = item.ubicacion,
+                    images = item.fotos,
+                    masterQuantity = item.cantidad
                 )
                 synchronized(AppStore.products) { AppStore.products[item.key.value] = product }
                 synchronized(AppStore.inventory) {
                     // Preserva reservas/ventas activas si ya existía; solo actualiza el maestro.
                     val existing = AppStore.inventory[item.key.value]
-                    AppStore.inventory[item.key.value] = existing?.withUpdatedMaster(1)
-                        ?: OperationalInventory(item.key, stockMaestro = 1)
+                    AppStore.inventory[item.key.value] = existing?.withUpdatedMaster(item.cantidad)
+                        ?: OperationalInventory(item.key, stockMaestro = item.cantidad)
                 }
             }
             println("  AppStore cargado desde BD: ${items.size} producto(s).")
@@ -617,6 +621,11 @@ fun Application.module() {
                             precioCompra = p.cost,
                             costoTotal = p.cost,
                             descripcion = p.description,
+                            tipo = p.category,
+                            marca = p.brand,
+                            condicion = p.condition,
+                            cantidad = p.masterQuantity,
+                            ubicacion = p.location,
                             fotos = p.images,
                             estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
                         )
@@ -661,6 +670,11 @@ fun Application.module() {
                     precioCompra = p.cost,
                     costoTotal = p.cost,
                     descripcion = p.description,
+                    tipo = p.category,
+                    marca = p.brand,
+                    condicion = p.condition,
+                    cantidad = p.masterQuantity,
+                    ubicacion = p.location,
                     fotos = p.images,
                     estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
                 )

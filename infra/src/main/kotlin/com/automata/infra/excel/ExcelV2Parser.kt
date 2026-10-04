@@ -206,16 +206,24 @@ class ExcelV2Parser {
                         "el producto se trata como Activo. Escribe 'Inactivo' para retirarlo de la venta."
                 )
             }
-            val desc = data["descripción"] ?: data["descripcion"] ?: data["descripción ab"] ?: "Sin descripción"
-            val qty = data["cantidad disponible"]?.toIntOrNull() ?: 1
+            val desc = data["descripción ab"] ?: data["descripción"] ?: data["descripcion"] ?: "Sin descripción"
+            val qty = data["cantidad"]?.toIntOrNull() ?: data["cantidad disponible"]?.toIntOrNull() ?: 1
 
-            val brand = data["pub_marca"] ?: "Genérico"
-            val condition = data["pub_condición"] ?: data["pub_condicion"] ?: "Nuevo"
+            val brand = data["marca"] ?: data["pub_marca"] ?: "Genérico"
+            val category = data["tipo"] ?: data["pub_categoría"] ?: data["pub_categoria"] ?: "General"
+            val condition = data["condición"] ?: data["condicion"] ?: data["pub_condición"] ?: data["pub_condicion"] ?: "Nuevo"
+            val location = data["ubicación"] ?: data["ubicacion"]
             val gtin = data["pub_gtin / ean"] ?: data["pub_gtin"]
             val mpn = data["pub_mpn"]
 
             val images = mutableListOf<String>()
             data["link"]?.takeIf { it.startsWith("http") }?.let { images.add(it) }
+            data["fotos"]?.let { fotosRaw ->
+                fotosRaw.split(Regex("""[\n,\s;]+"""))
+                    .map { it.trim() }
+                    .filter { it.startsWith("http") }
+                    .forEach { images.add(it) }
+            }
             for (i in 1..8) {
                 data["pub_foto $i"]?.takeIf { it.startsWith("http") }?.let { images.add(it) }
             }
@@ -231,6 +239,8 @@ class ExcelV2Parser {
                     description = desc,
                     brand = brand,
                     condition = condition,
+                    category = category,
+                    location = location?.takeIf { it.isNotBlank() },
                     gtinEan = gtin,
                     mpn = mpn,
                     images = images.distinct(),

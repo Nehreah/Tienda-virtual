@@ -175,4 +175,33 @@ class ExcelV2ParserTest {
         assertEquals(1, avisos.size)
         assertTrue(avisos[0].contains("fila 3"))
     }
+
+    @Test
+    fun `parsea correctamente las columnas extendidas de NEGOCIO xlsx`() {
+        val headers = listOf(
+            "Key", "Item name", "PP", "PM", "Costo", "Ganancia", "ROI/Margen",
+            "Estado", "Link", "Fotos", "Marca", "Tipo", "Condición", "cantidad", "ubicación",
+            "Descripción AB", "Fecha Compra", "Fecha Venta"
+        )
+        val data = listOf(
+            listOf(
+                "PROD-100", "Smartphone Pro", "1500000", "1200000", "900000", "600000", "40%",
+                "Publicado", "https://ejemplo.com", "https://foto1.jpg", "TechBrand", "Celulares",
+                "Reacondicionado", 5, "Estante B-12", "Excelente estado", "2026-01-01", null
+            )
+        )
+        val r = parse(xlsx(data, headers = headers))
+        assertNull(r.fileError)
+        assertEquals(1, r.products.size)
+        val p = r.products[0]
+        assertEquals("PROD-100", p.key.value)
+        assertEquals("Smartphone Pro", p.itemName)
+        assertEquals("TechBrand", p.brand)
+        assertEquals("Celulares", p.category)
+        assertEquals("Reacondicionado", p.condition)
+        assertEquals(5, p.masterQuantity)
+        assertEquals("Estante B-12", p.location)
+        assertEquals("Excelente estado", p.description)
+    }
 }
+

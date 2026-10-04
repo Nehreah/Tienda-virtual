@@ -106,6 +106,10 @@ class ExposedInventarioRepository : InventarioRepository {
         this[InventarioTable.pctAntonio] = item.reparte.pctAntonio
         this[InventarioTable.pctJavier] = item.reparte.pctJavier
         this[InventarioTable.descripcion] = item.descripcion
+        this[InventarioTable.marca] = item.marca
+        this[InventarioTable.condicion] = item.condicion
+        this[InventarioTable.cantidad] = item.cantidad
+        this[InventarioTable.ubicacion] = item.ubicacion
     }
 
     private fun ResultRow.toItem() = InventarioItem(
@@ -124,6 +128,10 @@ class ExposedInventarioRepository : InventarioRepository {
         costoTotal = Money.of(this[InventarioTable.costoTotal]),
         descripcion = this[InventarioTable.descripcion],
         tipo = this[InventarioTable.tipo],
+        marca = this[InventarioTable.marca],
+        condicion = this[InventarioTable.condicion],
+        cantidad = this[InventarioTable.cantidad],
+        ubicacion = this[InventarioTable.ubicacion],
         requiereReparacion = this[InventarioTable.requiereReparacion],
         reparte = ReparteSocios(this[InventarioTable.pctAntonio], this[InventarioTable.pctJavier]),
         canalVenta = this[InventarioTable.canalVenta]

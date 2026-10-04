@@ -22,6 +22,7 @@ data class CommercialProduct(
     val gtinEan: String? = null,
     val mpn: String? = null,
     val category: String = "General",
+    val location: String? = null,
     val attributes: Map<String, String> = emptyMap(),
     val images: List<String> = emptyList(),
     val masterQuantity: Int = 0 // Stock Maestro del Excel

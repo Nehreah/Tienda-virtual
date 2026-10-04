@@ -33,7 +33,8 @@ object ExcelGenerator {
         val invSheet = workbook.createSheet("Inventario")
         val invHeaders = listOf(
             "Key", "Item name", "PP", "PM", "Costo", "Ganancia", "ROI/Margen",
-            "Estado", "Link", "Fotos", "Descripción AB", "Fecha Compra", "Fecha Venta", "Vendido En"
+            "Estado", "Link", "Fotos", "Marca", "Tipo", "Condición", "cantidad", "ubicación",
+            "Descripción AB", "Fecha Compra", "Fecha Venta"
         )
         val hRow = invSheet.createRow(0)
         invHeaders.forEachIndexed { i, h -> hRow.createCell(i).setCellValue(h) }
@@ -64,10 +65,14 @@ object ExcelGenerator {
             row.createCell(7).setCellValue(sanitizeCell(item.estado.etiqueta))
             row.createCell(8).setCellValue(sanitizeCell(item.link ?: ""))
             row.createCell(9).setCellValue(sanitizeCell(item.fotos.joinToString("\n")))
-            row.createCell(10).setCellValue(sanitizeCell(item.descripcion ?: ""))
-            row.createCell(11).setCellValue(item.fechaCompra?.toString() ?: "")
-            row.createCell(12).setCellValue(item.fechaVenta?.toString() ?: "")
-            row.createCell(13).setCellValue(sanitizeCell(item.vendidoEn?.formatFormattedCop() ?: ""))
+            row.createCell(10).setCellValue(sanitizeCell(item.marca ?: ""))
+            row.createCell(11).setCellValue(sanitizeCell(item.tipo ?: ""))
+            row.createCell(12).setCellValue(sanitizeCell(item.condicion ?: ""))
+            row.createCell(13).setCellValue(item.cantidad.toString())
+            row.createCell(14).setCellValue(sanitizeCell(item.ubicacion ?: ""))
+            row.createCell(15).setCellValue(sanitizeCell(item.descripcion ?: ""))
+            row.createCell(16).setCellValue(item.fechaCompra?.toString() ?: "")
+            row.createCell(17).setCellValue(item.fechaVenta?.toString() ?: "")
         }
 
         // 2. Hoja Config

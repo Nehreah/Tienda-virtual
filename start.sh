@@ -74,7 +74,8 @@ echo -e "${GREEN}[+] Configuración verificada.${RESET}"
 echo -e "${GREEN}[+] Abriendo puerto ${PORT}...${RESET}"
 echo -e "${CYAN}---------------------------------------------------------------${RESET}"
 echo -e "${CYAN}  El Dashboard Operacional estará disponible en:${RESET}"
-echo -e "${YELLOW}  👉 http://127.0.0.1:${PORT}   (en modo local solo se puede abrir desde esta maquina)${RESET}"
+echo -e "${YELLOW}  👉 http://127.0.0.1:${PORT}   (ábrelo en tu navegador web)${RESET}"
+echo -e "${CYAN}  ℹ️  Nota: Esta terminal debe mantenerse abierta mientras usas la app.${RESET}"
 echo -e "${CYAN}---------------------------------------------------------------${RESET}"
 
 GRADLE_BIN="./gradlew"
@@ -84,4 +85,4 @@ fi
 
 echo -e "${GREEN}[+] Iniciando servidor Ktor Netty...${RESET}"
 # --console=plain suprime los códigos de escape ANSI (los "4;1;97m" que aparecen en algunas terminales).
-exec $GRADLE_BIN :app:run --console=plain
+exec $GRADLE_BIN :app:run --no-daemon --console=plain
