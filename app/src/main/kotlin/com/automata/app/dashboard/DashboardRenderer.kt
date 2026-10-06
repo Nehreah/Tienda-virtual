@@ -872,7 +872,7 @@ object DashboardRenderer {
         """.trimIndent()
     }
 
-    private fun escapeHtml(str: String): String {
+    fun escapeHtml(str: String): String {
         return str.replace("&", "&amp;")
             .replace("<", "&lt;")
             .replace(">", "&gt;")

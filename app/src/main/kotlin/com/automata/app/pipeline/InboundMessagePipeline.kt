@@ -71,9 +71,14 @@ class InboundMessagePipeline(
     private val proofHold: Duration = 12.hours,
     private val escalationTimeout: Duration = 24.hours
 ) {
-    private val lock = Mutex()
+    // Fase 7.2: Bloqueo por conversación para permitir concurrencia entre clientes distintos
+    private val conversationLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+    private val globalLock = Mutex()
 
-    /** Reservas activas por id. Solo se toca dentro de [lock]. */
+    private fun lockFor(conversationId: String): Mutex =
+        conversationLocks.computeIfAbsent(conversationId) { Mutex() }
+
+    /** Reservas activas por id. Solo se toca dentro de [globalLock]. */
     private val reservations = mutableMapOf<String, Reservation>()
 
     suspend fun handle(
@@ -88,7 +93,10 @@ class InboundMessagePipeline(
         val intent: ParsedCustomerIntent? =
             if (trimmed.isEmpty()) null else llm.parseIntent(trimmed, catalog.knownKeys())
 
-        val outcome = lock.withLock { decide(channel, senderId, messageId, trimmed, intent, now) }
+        val convId = "${channel.lowercase()}:$senderId"
+        val outcome = lockFor(convId).withLock {
+            globalLock.withLock { decide(channel, senderId, messageId, trimmed, intent, now) }
+        }
 
         val reply = outcome.reply ?: return outcome
         val sent = router.sendMessage(channel, senderId, reply)
@@ -100,10 +108,32 @@ class InboundMessagePipeline(
 
     /** Libera las reservas vencidas. Se llama en cada mensaje y desde un temporizador. */
     suspend fun sweep(now: Instant = Clock.System.now()) {
-        lock.withLock { sweepExpired(now) }
+        globalLock.withLock { sweepExpired(now) }
     }
 
-    suspend fun activeReservationCount(): Int = lock.withLock { reservations.size }
+    suspend fun activeReservationCount(): Int = globalLock.withLock { reservations.size }
+
+    /**
+     * Fase 1.5 — Hotfix del pago: el asesor confirma el pago desde el dashboard.
+     * Marca la reserva asociada a [conversationId] como CONFIRMED (no vence más).
+     * La conversación pasa a PAID_CONFIRMED y la reserva se extiende 365 días para que
+     * el barrido de vencidas NO la libere. Devuelve true si se encontró y confirmó.
+     */
+    suspend fun confirmPayment(conversationId: String, now: Instant = Clock.System.now()): Boolean =
+        globalLock.withLock {
+            val conv = conversations.findById(conversationId) ?: return@withLock false
+            val reservationId = conv.currentReservationId ?: return@withLock false
+            val reservation = reservations[reservationId] ?: return@withLock false
+            // Extender la expiración 1 año: ningún barrido la tocará.
+            val permanent = reservation.copy(expiresAt = now + 8_760.hours)  // 365 * 24 h
+            reservations[reservationId] = permanent
+            // Actualizar estado de la conversación a PAID_CONFIRMED.
+            val confirmed = conv.copy(state = ConversationState.PAID_CONFIRMED, lastUpdated = now)
+            conversations.save(confirmed)
+            true
+        }
+
+
 
     // ------------------------------------------------------------------------------------------
 
@@ -219,7 +249,14 @@ class InboundMessagePipeline(
                             "Si quieres proponer un nuevo valor, escríbeme la cifra.",
                             product, product.publishedPrice.amountInCop)
                     }
-                    else -> handleOffer(conv, product, Money.of(pending), available, now)
+                    // Fase 1.2 Fix: el cliente acepta la contraoferta pendiente → reservar DIRECTAMENTE al precio
+                    // acordado, sin volver a pasar por el NegotiationEngine (eso causaba rechazos incorrectos en
+                    // rondas 2+, escaladas a humano por counterOfferCount, o nuevas contraofertas en L3/L4).
+                    else -> {
+                        val agreedPrice = Money.of(pending)
+                        if (!available) answer(conv, now, soldOutText(product), product)
+                        else reserveAndReply(conv, product, agreedPrice, "¡Trato hecho!", now)
+                    }
                 }
             }
             CustomerIntentType.REQUEST_RESERVATION -> {

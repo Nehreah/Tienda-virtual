@@ -28,6 +28,8 @@ fun Table.jsonbText(name: String): Column<String> = registerColumn<String>(name,
 object EventosProcesadosTable : Table("tienda.eventos_procesados") {
     val canal = text("canal")
     val eventoExternoId = text("evento_externo_id")
+    val estado = text("estado").default("DONE")
+    val actualizadoEn = timestamp("actualizado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
 
     override val primaryKey = PrimaryKey(canal, eventoExternoId)
 }
@@ -108,3 +110,46 @@ object HistorialTable : Table("tienda.historial") {
 
     override val primaryKey = PrimaryKey(id)
 }
+
+object ConversacionesTable : Table("tienda.conversaciones") {
+    val conversationId = text("conversation_id")
+    val customerId = text("customer_id")
+    val channel = text("channel")
+    val state = text("state")
+    val activeProductKey = text("active_product_key").nullable()
+    val agreedPriceCop = long("agreed_price_cop").nullable()
+    val counterOfferCount = integer("counter_offer_count").default(0)
+    val pendingCounterCop = long("pending_counter_cop").nullable()
+    val pendingCounterAt = timestamp("pending_counter_at").nullable()
+    val lastUpdated = timestamp("last_updated")
+
+    override val primaryKey = PrimaryKey(conversationId)
+}
+
+object ReservasTable : Table("tienda.reservas") {
+    val reservationId = text("reservation_id")
+    val conversationId = text("conversation_id")
+    val productKey = text("product_key")
+    val quantity = integer("quantity").default(1)
+    val status = text("status").default("ACTIVE")
+    val createdAt = timestamp("created_at")
+    val expiresAt = timestamp("expires_at")
+
+    override val primaryKey = PrimaryKey(reservationId)
+}
+
+object OutboxTable : Table("tienda.outbox") {
+    val eventId = text("event_id")
+    val channel = text("channel")
+    val recipientId = text("recipient_id")
+    val payloadJson = text("payload_json")
+    val status = text("status").default("PENDING")
+    val attempts = integer("attempts").default(0)
+    val createdAt = timestamp("created_at").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val lastAttemptAt = timestamp("last_attempt_at").nullable()
+    val sentAt = timestamp("sent_at").nullable()
+    val errorMessage = text("error_message").nullable()
+
+    override val primaryKey = PrimaryKey(eventId)
+}
+

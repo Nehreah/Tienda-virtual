@@ -79,8 +79,8 @@ echo -e "${CYAN}  ℹ️  Nota: Esta terminal debe mantenerse abierta mientras u
 echo -e "${CYAN}---------------------------------------------------------------${RESET}"
 
 GRADLE_BIN="./gradlew"
-if [ ! -f "$GRADLE_BIN" ] && [ -f "/home/nehreah/.gradle/wrapper/dists/gradle-9.5.0-bin/bvnork1r7n8i6kp5cnkibsc9q/gradle-9.5.0/bin/gradle" ]; then
-    GRADLE_BIN="/home/nehreah/.gradle/wrapper/dists/gradle-9.5.0-bin/bvnork1r7n8i6kp5cnkibsc9q/gradle-9.5.0/bin/gradle"
+if [ ! -x "$GRADLE_BIN" ] && command -v gradle >/dev/null 2>&1; then
+    GRADLE_BIN="gradle"
 fi
 
 echo -e "${GREEN}[+] Iniciando servidor Ktor Netty...${RESET}"

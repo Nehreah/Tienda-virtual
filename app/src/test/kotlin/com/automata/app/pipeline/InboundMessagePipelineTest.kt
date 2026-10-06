@@ -304,4 +304,116 @@ class InboundMessagePipelineTest {
         assertNull(out.conversation.pendingCounterCop)
         assertEquals(0, s.catalog.inv[k2]!!.reservasActivas)
     }
+
+    // ── Fase 1.1 Tests: aceptar contraoferta en rondas 2, 3 y 4 ──────────────────────────────
+
+    /**
+     * Escenario base para probar aceptación en ronda N:
+     * hace N-1 ofertas bajas para acumular contraofertas, luego acepta.
+     * Debe producir PAYMENT_PENDING al precio de la última contraoferta, nunca escalar a humano.
+     */
+    private suspend fun runAcceptCounterOfferRound(round: Int): PipelineOutcome {
+        // PP=120.000 PM=95.000: cualquier oferta <95.000 es rechazada y genera contraoferta.
+        val s = setup(5, product(k1, "Audífonos"))
+
+        // Rondas 1..(round-1): acumular contraofertas sin aceptar.
+        for (i in 1 until round) {
+            s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 50_000)
+            s.pipeline.handle("whatsapp", "573001", "m$i", "te doy 50000", t0 + i.minutes)
+        }
+
+        // Ronda N: el cliente acepta la contraoferta pendiente.
+        s.llm.next = intent(CustomerIntentType.ACCEPT_COUNTER_OFFER)
+        return s.pipeline.handle("whatsapp", "573001", "mAccept", "dale", t0 + round.minutes)
+    }
+
+    @Test
+    fun `accepting counter offer in round 2 reserves at the pending price`() = runBlocking {
+        val out = runAcceptCounterOfferRound(2)
+        assertEquals(ConversationState.PAYMENT_PENDING, out.conversation.state,
+            "Ronda 2: debe quedar en PAYMENT_PENDING, no en ${out.conversation.state}")
+        assertNotNull(out.conversation.currentReservationId, "Debe haber reserva activa")
+        assertNull(out.conversation.pendingCounterCop, "La contraoferta pendiente debe limpiarse")
+        assertEquals(0, out.conversation.counterOfferCount, "El contador de contraofertas debe resetearse")
+    }
+
+    @Test
+    fun `accepting counter offer in round 3 reserves at the pending price`() = runBlocking {
+        val out = runAcceptCounterOfferRound(3)
+        assertEquals(ConversationState.PAYMENT_PENDING, out.conversation.state,
+            "Ronda 3: debe quedar en PAYMENT_PENDING, no en ${out.conversation.state}")
+        assertNotNull(out.conversation.currentReservationId)
+        assertNull(out.conversation.pendingCounterCop)
+    }
+
+    @Test
+    fun `accepting counter offer in round 4 reserves at the pending price (not escalated)`() = runBlocking {
+        // Round 4 = MAX_COUNTER_OFFERS. Con el bug antiguo esto escalaba a humano.
+        val out = runAcceptCounterOfferRound(4)
+        assertEquals(ConversationState.PAYMENT_PENDING, out.conversation.state,
+            "Ronda 4: debe quedar en PAYMENT_PENDING, no en ${out.conversation.state}. " +
+            "Si es ESCALATED_HUMAN el bug de ACCEPT_COUNTER_OFFER no está corregido.")
+        assertNotNull(out.conversation.currentReservationId)
+        assertNull(out.conversation.pendingCounterCop)
+        assertNotEquals(ConversationState.ESCALATED_HUMAN, out.conversation.state)
+    }
+
+    @Test
+    fun `the agreed price when accepting a counter offer matches the pending counter price`() = runBlocking {
+        val s = setup(5, product(k1, "Audífonos"))
+        s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 50_000)
+        val firstOut = s.pipeline.handle("whatsapp", "573001", "m1", "te doy 50000", t0)
+        val counterPrice = firstOut.conversation.pendingCounterCop!!
+
+        // Tercera ronda: otra oferta baja para generar una segunda contraoferta.
+        s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 50_000)
+        val secondOut = s.pipeline.handle("whatsapp", "573001", "m2", "te doy 50000", t0 + 1.minutes)
+        val counter2Price = secondOut.conversation.pendingCounterCop!!
+        assertNotEquals(counterPrice, counter2Price, "Las contraofertas de rondas distintas suelen diferir")
+
+        // Aceptar la segunda contraoferta: el precio acordado debe ser counter2Price (no el del cliente).
+        s.llm.next = intent(CustomerIntentType.ACCEPT_COUNTER_OFFER)
+        val acceptOut = s.pipeline.handle("whatsapp", "573001", "m3", "dale", t0 + 2.minutes)
+        assertEquals(ConversationState.PAYMENT_PENDING, acceptOut.conversation.state)
+        assertEquals(counter2Price, acceptOut.conversation.agreedPriceCop,
+            "El precio acordado debe ser la contraoferta del servidor, no el precio del cliente (50.000)")
+        assertTrue(acceptOut.conversation.agreedPriceCop!! > 95_000L,
+            "El precio acordado siempre debe ser > PM (95.000)")
+    }
+
+    // ── Fase 1.5 Test: confirmPayment() no libera el stock ───────────────────────────────────
+
+    @Test
+    fun `confirmPayment keeps the reservation alive after normal expiry time`() = runBlocking {
+        val s = setup(5, product(k1, "Audífonos"))
+        // 1. Hacer una reserva.
+        s.llm.next = intent(CustomerIntentType.MAKE_OFFER, k1, 120_000)
+        val reserved = s.pipeline.handle("whatsapp", "573001", "m1", "te pago 120000", t0)
+        assertEquals(ConversationState.PAYMENT_PENDING, reserved.conversation.state)
+        assertEquals(1, s.catalog.inv[k1]!!.reservasActivas)
+
+        // 2. Confirmar el pago (el asesor lo hace desde el dashboard).
+        val confirmed = s.pipeline.confirmPayment(reserved.conversation.conversationId, t0 + 5.minutes)
+        assertTrue(confirmed, "confirmPayment debe retornar true cuando hay reserva activa")
+
+        // 3. El barrido de 16 minutos NO debe liberar el stock (la reserva fue extendida).
+        s.pipeline.sweep(t0 + 16.minutes)
+        assertEquals(1, s.catalog.inv[k1]!!.reservasActivas,
+            "El stock NO debe liberarse tras confirmar el pago, aunque hayan pasado los 15 min de reserva")
+        assertEquals(1, s.pipeline.activeReservationCount())
+
+        // 4. La conversación debe estar en PAID_CONFIRMED.
+        val updatedConv = s.store.find("whatsapp", "573001")
+        assertEquals(ConversationState.PAID_CONFIRMED, updatedConv?.state,
+            "La conversación debe estar en PAID_CONFIRMED tras confirmar el pago")
+    }
+
+    @Test
+    fun `confirmPayment returns false when there is no active reservation`() = runBlocking {
+        val s = setup(5, product(k1, "Audífonos"))
+        // Sin reserva: confirmPayment debe retornar false.
+        val result = s.pipeline.confirmPayment("whatsapp:573001")
+        assertFalse(result, "confirmPayment debe retornar false si no hay conversación/reserva activa")
+    }
 }
+

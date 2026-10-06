@@ -20,6 +20,7 @@ import com.automata.commerce.service.AntiOversellSaga
 import com.automata.commerce.service.NegotiationEngine
 import com.automata.infra.config.AppConfig
 import com.automata.infra.db.DatabaseFactory
+import com.automata.infra.db.ExposedConversationStore
 import com.automata.infra.db.ExposedInventarioRepository
 import com.automata.infra.db.ExposedProcessedEventStore
 import com.automata.infra.db.Origen
@@ -441,7 +442,7 @@ fun Application.module() {
         llm = llmAdapter,
         engine = negotiationEngine,
         catalog = AppStoreCatalog,
-        conversations = InMemoryConversationStore(),
+        conversations = if (AppStore.databaseConnected) ExposedConversationStore() else InMemoryConversationStore(),
         router = channelRouter,
         paymentInstructions = AppConfig.paymentInstructions
     )
@@ -503,7 +504,9 @@ fun Application.module() {
                 call.respondText("<p class='text-rose-600'>Este producto no está disponible (estado Inactivo).</p>", ContentType.Text.Html)
                 return@post
             }
-            val product = synchronized(AppStore.products) { AppStore.products.values.firstOrNull { it.isActive } }
+            // Fase 1.3 Fix: usar el producto mencionado (si el LLM lo detectó), o el primero activo como fallback.
+            val product = mentioned
+                ?: synchronized(AppStore.products) { AppStore.products.values.firstOrNull { it.isActive } }
             if (product == null) {
                 call.respondText("<p class='text-rose-600'>No hay productos activos cargados. Sube primero el Excel (los productos Inactivos no se negocian).</p>", ContentType.Text.Html)
                 return@post
@@ -524,42 +527,54 @@ fun Application.module() {
                     dealLabel = "Cancelado / Rechazado (< PM)"
                 }
 
+                val safeName = DashboardRenderer.escapeHtml(product.itemName)
+                val safeMsg = DashboardRenderer.escapeHtml(decision.message)
                 """
                 <div class="space-y-2">
                     <div class="flex items-center space-x-2">
                         <span class="px-2 py-0.5 rounded text-xs font-bold $badgeColor">Nivel ${decision.level.name}</span>
-                        <span class="text-xs text-gray-500">Producto: ${product.itemName} (PP: ${product.publishedPrice.formatFormattedCop()})</span>
+                        <span class="text-xs text-gray-500">Producto: $safeName (PP: ${product.publishedPrice.formatFormattedCop()})</span>
                     </div>
-                    <p class="font-semibold text-gray-800">&ldquo;${decision.message}&rdquo;</p>
+                    <p class="font-semibold text-gray-800">&ldquo;$safeMsg&rdquo;</p>
                     ${decision.counterOffer?.let { "<p class='text-xs text-indigo-600'>Contraoferta generada: ${it.formatFormattedCop()}</p>" } ?: ""}
                 </div>
                 """.trimIndent()
             } else {
+                val safeName = DashboardRenderer.escapeHtml(product.itemName)
                 """
                 <div class="space-y-1">
                     <p class="text-xs font-bold text-indigo-600">Intención Detectada: ${parsedIntent.intentType.name}</p>
-                    <p class="text-gray-700">Consulta recibida sobre ${product.itemName}. El precio publicado es ${product.publishedPrice.formatFormattedCop()}.</p>
+                    <p class="text-gray-700">Consulta recibida sobre $safeName. El precio publicado es ${product.publishedPrice.formatFormattedCop()}.</p>
                 </div>
                 """.trimIndent()
             }
 
-            synchronized(AppStore.chatDeals) { AppStore.chatDeals.add(
-                0,
-                ChatDealLog(
-                    id = "SIM-${(System.currentTimeMillis() % 10000)}",
-                    customer = "Cliente Simulador",
-                    channel = "simulator",
-                    channelDisplayName = "Simulador",
-                    productName = product.itemName,
-                    offeredPrice = offeredPrice?.formatFormattedCop() ?: product.publishedPrice.formatFormattedCop(),
-                    dealState = dealState,
-                    dealStateLabel = dealLabel,
-                    timestamp = "Ahora mismo"
+            // Fase 1.3 Fix: IDs únicos (UUID corto) para que varias simulaciones no sobreescriban la misma entrada.
+            val simId = "SIM-${java.util.UUID.randomUUID().toString().take(8).uppercase()}"
+            synchronized(AppStore.chatDeals) {
+                AppStore.chatDeals.add(
+                    0,
+                    ChatDealLog(
+                        id = simId,
+                        customer = "Cliente Simulador",
+                        channel = "simulator",
+                        channelDisplayName = "Simulador",
+                        productName = product.itemName,
+                        offeredPrice = offeredPrice?.formatFormattedCop() ?: product.publishedPrice.formatFormattedCop(),
+                        dealState = dealState,
+                        dealStateLabel = dealLabel,
+                        timestamp = "Ahora mismo"
+                    )
                 )
-            ) }
+                // Tope de 100 entradas (Fase 1.3 Fix: ya existía en recordDeal, ahora también aquí).
+                if (AppStore.chatDeals.size > 100) {
+                    AppStore.chatDeals.subList(100, AppStore.chatDeals.size).clear()
+                }
+            }
 
             call.respondText(responseHtml, ContentType.Text.Html)
         }
+
 
         // 3. Subida / Importación de Excel a Supabase & AppStore
         post("/api/excel/upload") {
@@ -592,27 +607,28 @@ fun Application.module() {
 
             val parseResult = excelParser.parseExcel(fileBytes!!.inputStream())
 
-            // Fase 2.1: archivo dañado o sin lo mínimo -> 400 con mensaje (nunca 500). No se importa nada.
-            val fileError = parseResult.fileError
-            if (fileError != null) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to fileError))
+            // Decision D9: Si el archivo tiene errores de formato O filas rechazadas, CANCELAR TODO (0 filas importadas).
+            if (parseResult.fileError != null || parseResult.errors.isNotEmpty()) {
+                val allErrors = mutableListOf<String>()
+                parseResult.fileError?.let { allErrors.add(it) }
+                allErrors.addAll(parseResult.errors)
+                call.respond(
+                    HttpStatusCode.BadRequest,
+                    mapOf(
+                        "summary" to "Importación cancelada por errores en el Excel (${allErrors.size} error(es)). No se modificó ningún dato.",
+                        "errors" to allErrors,
+                        "warnings" to parseResult.warnings
+                    )
+                )
                 return@post
             }
-            // Las filas válidas SÍ se importan (más abajo); las inválidas se listan en la respuesta.
 
             val dbErrors = mutableListOf<String>()
 
-            parseResult.products.forEach { p ->
-                synchronized(AppStore.products) { AppStore.products[p.key.value] = p }
-                synchronized(AppStore.inventory) {
-                    val currentInv = AppStore.inventory[p.key.value]
-                    AppStore.inventory[p.key.value] = currentInv?.withUpdatedMaster(p.masterQuantity)
-                        ?: OperationalInventory(p.key, stockMaestro = p.masterQuantity)
-                }
-
-                // Guardar en Supabase si el repositorio está disponible
-                if (dbRepository != null) {
-                    try {
+            // Transacción atómica si la BD está conectada: si algún upsert en BD falla, la importación se revierte
+            try {
+                org.jetbrains.exposed.sql.transactions.transaction {
+                    parseResult.products.forEach { p ->
                         val item = InventarioItem(
                             key = p.key,
                             item = p.itemName,
@@ -629,30 +645,46 @@ fun Application.module() {
                             fotos = p.images,
                             estado = EstadoItem.desdeEtiqueta(p.status) ?: EstadoItem.PUBLICADO
                         )
-                        dbRepository.upsert(item, usuario = "sistema", origen = Origen.IMPORT)
-                    } catch (e: Exception) {
-                        // Fase 2.4: el error de BD llega al cliente (no solo a System.err)
-                        val msg = "Error al guardar ${p.key} en BD: ${e.message}"
-                        System.err.println(msg)
-                        dbErrors.add(msg)
+
+                        if (dbRepository != null) {
+                            dbRepository.upsert(item, usuario = "sistema", origen = Origen.IMPORT)
+                        }
+
+                        // Actualizar AppStore en memoria
+                        synchronized(AppStore.products) { AppStore.products[p.key.value] = p }
+                        synchronized(AppStore.inventory) {
+                            val currentInv = AppStore.inventory[p.key.value]
+                            AppStore.inventory[p.key.value] = currentInv?.withUpdatedMaster(p.masterQuantity)
+                                ?: OperationalInventory(p.key, stockMaestro = p.masterQuantity)
+                        }
                     }
                 }
+            } catch (e: Exception) {
+                val msg = "Error en transacción de BD al importar Excel: ${e.message}"
+                System.err.println(msg)
+                dbErrors.add(msg)
+                call.respond(
+                    HttpStatusCode.InternalServerError,
+                    mapOf(
+                        "summary" to "Importación cancelada debido a un error de base de datos. Ningún dato fue modificado.",
+                        "dbErrors" to dbErrors
+                    )
+                )
+                return@post
             }
 
-            // Fase 2.1: si todo estaba bien se vuelve al tablero; si hubo filas rechazadas o errores de BD se muestra el detalle.
             val rowWarnings = parseResult.warnings.filter { it.startsWith("Hoja 'Inventario'") }
-            if (parseResult.errors.isEmpty() && rowWarnings.isEmpty() && dbErrors.isEmpty()) {
+            if (rowWarnings.isEmpty() && dbErrors.isEmpty()) {
                 call.respondRedirect("/")
                 return@post
             }
+
             val imported = parseResult.products.size
             call.respond(
-                if (imported == 0) HttpStatusCode.UnprocessableEntity else HttpStatusCode.OK,
+                HttpStatusCode.OK,
                 mapOf(
-                    "summary" to listOf("Productos importados: $imported. Filas rechazadas: ${parseResult.rejectedRows}."),
-                    "errors" to parseResult.errors,
-                    "warnings" to parseResult.warnings,
-                    "dbErrors" to dbErrors     // Fase 2.4: errores de persistencia visibles
+                    "summary" to listOf("Productos importados exitosamente: $imported."),
+                    "warnings" to parseResult.warnings
                 )
             )
         }
@@ -700,7 +732,7 @@ fun Application.module() {
             call.respondBytes(excelBytes, ContentType.Application.OctetStream)
         }
 
-        // Fase 5.3: Confirmar pago manualmente desde el tablero.
+        // Fase 4: Confirmar pago manualmente desde el tablero (ciclo de venta completo).
         post("/api/confirmar-pago") {
             if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
             val params = call.receiveParameters()
@@ -711,25 +743,91 @@ fun Application.module() {
                 return@post
             }
 
+            // 1. Bloquear la reserva en el pipeline (evita que el barrido de vencidas libere el stock).
+            val pipelineConfirmed = inboundPipeline.confirmPayment(dealId)
+
+            // 2. Buscar el trato y producto asociado
+            var dbErrorMessage: String? = null
+
+            val deal = synchronized(AppStore.chatDeals) {
+                AppStore.chatDeals.firstOrNull { it.id == dealId }
+            }
+
+            if (deal != null) {
+                val channelName = deal.channel
+                val foundProduct = synchronized(AppStore.products) {
+                    AppStore.products.values.firstOrNull { it.itemName.equals(deal.productName, ignoreCase = true) }
+                }
+                if (foundProduct != null) {
+                    // Actualizar estado en AppStore.inventory
+                    synchronized(AppStore.inventory) {
+                        val currentInv = AppStore.inventory[foundProduct.key.value]
+                        if (currentInv != null) {
+                            AppStore.inventory[foundProduct.key.value] = currentInv.recordSale(1, wasReserved = true)
+                        }
+                    }
+
+                    // Intentar marcar vendido en la BD Supabase
+                    if (dbRepository != null) {
+                        try {
+                            val priceClean = deal.offeredPrice.replace("[^0-9]".toRegex(), "").toLongOrNull() ?: 0L
+                            dbRepository.marcarVendido(
+                                key = foundProduct.key,
+                                vendidoEn = Money.of(priceClean),
+                                fecha = java.time.LocalDate.now(),
+                                canal = deal.channel,
+                                usuario = "dashboard",
+                                origen = Origen.DASHBOARD
+                            )
+                        } catch (e: Exception) {
+                            dbErrorMessage = e.message
+                            System.err.println("confirmar-pago warning al marcar vendido en BD: ${e.message}")
+                        }
+                    }
+
+                    // Disparar Saga Anti-Sobreventa para actualizar Shopify / Meta
+                    val externalMappings = AppStore.channelMappings[foundProduct.key.value] ?: emptyMap()
+                    val remaining = synchronized(AppStore.inventory) {
+                        AppStore.inventory[foundProduct.key.value]?.stockVivo ?: 0
+                    }
+                    try {
+                        antiOversellSaga.executeRetractionSaga(foundProduct.key, channelName, externalMappings, remaining)
+                    } catch (e: Exception) {
+                        System.err.println("AntiOversellSaga error: ${e.message}")
+                    }
+                }
+            }
+
+            // 3. Actualizar el estado del trato en el dashboard
             val updated = synchronized(AppStore.chatDeals) {
                 val idx = AppStore.chatDeals.indexOfFirst { it.id == dealId }
                 if (idx >= 0) {
-                    val deal = AppStore.chatDeals[idx]
-                    val confirmed = deal.copy(
+                    val currentDeal = AppStore.chatDeals[idx]
+                    val label = when {
+                        dbErrorMessage != null -> "Pago confirmado (advertencia BD: $dbErrorMessage)"
+                        pipelineConfirmed -> "Pago confirmado — pendiente envío"
+                        else -> "Pago confirmado (reserva no encontrada en pipeline)"
+                    }
+                    val confirmed = currentDeal.copy(
                         dealState = DealState.PENDIENTE_ENVIO,
-                        dealStateLabel = "Pago confirmado — pendiente envío"
+                        dealStateLabel = label
                     )
                     AppStore.chatDeals[idx] = confirmed
                     true
                 } else false
             }
 
-            if (updated) {
-                call.respondRedirect("/")
+            if (!pipelineConfirmed) {
+                System.err.println("confirmar-pago: no se encontró reserva activa en el pipeline para $dealId")
+            }
+
+            if (updated || pipelineConfirmed) {
+                call.respondRedirect("/", permanent = false)
             } else {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Trato $dealId no encontrado"))
             }
         }
+
 
         // 5. Webhook Shopify HMAC
         post("/webhooks/shopify") {
@@ -750,44 +848,51 @@ fun Application.module() {
                 return@post
             }
 
-            // Idempotencia: Shopify reenvía webhooks; el mismo evento no puede descontar stock dos veces.
+            // Idempotencia en dos tiempos (Fase 7.3): Shopify reenvía webhooks; el mismo evento no puede descontar stock dos veces.
             val shopifyEventId = call.request.headers["X-Shopify-Event-Id"]
                 ?: call.request.headers["X-Shopify-Webhook-Id"]
-            if (shopifyEventId != null && !processedEvents.markIfNew("shopify", shopifyEventId)) {
+            if (shopifyEventId != null && !processedEvents.tryStartProcessing("shopify", shopifyEventId)) {
                 call.respond(HttpStatusCode.OK, mapOf("status" to "duplicate_ignored"))
                 return@post
             }
 
-            // Fase 2.5: procesar TODOS los eventos (un evento por line_item).
-            for (soldEvent in result.emittedEvents) {
-                val keyStr = soldEvent.productKey.value
-                if (soldEvent.quantity < 0) {
-                    // Cancelación: devolver stock (sustraer de unidadesVendidas, sin bajar de 0).
-                    val returnQty = -soldEvent.quantity
-                    synchronized(AppStore.inventory) {
-                        val inv = AppStore.inventory[keyStr]
-                        if (inv != null) {
-                            AppStore.inventory[keyStr] = inv.copy(
-                                unidadesVendidas = maxOf(0, inv.unidadesVendidas - returnQty),
-                                version = inv.version + 1
+            try {
+                // Fase 2.5: procesar TODOS los eventos (un evento por line_item).
+                for (soldEvent in result.emittedEvents) {
+                    val keyStr = soldEvent.productKey.value
+                    if (soldEvent.quantity < 0) {
+                        // Cancelación: devolver stock (sustraer de unidadesVendidas, sin bajar de 0).
+                        val returnQty = -soldEvent.quantity
+                        synchronized(AppStore.inventory) {
+                            val inv = AppStore.inventory[keyStr]
+                            if (inv != null) {
+                                AppStore.inventory[keyStr] = inv.copy(
+                                    unidadesVendidas = maxOf(0, inv.unidadesVendidas - returnQty),
+                                    version = inv.version + 1
+                                )
+                            }
+                        }
+                    } else {
+                        val updatedInv = synchronized(AppStore.inventory) {
+                            AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)
+                                ?.also { AppStore.inventory[keyStr] = it }
+                        }
+                        if (updatedInv != null) {
+                            antiOversellSaga.executeRetractionSaga(
+                                productKey     = soldEvent.productKey,
+                                originChannel  = "shopify",
+                                externalIdMap  = AppStore.channelMappings[keyStr] ?: emptyMap(),
+                                remainingStock = updatedInv.stockVivo
                             )
                         }
                     }
-                } else {
-                    val updatedInv = synchronized(AppStore.inventory) {
-                        AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)
-                            ?.also { AppStore.inventory[keyStr] = it }
-                    }
-                    if (updatedInv != null) {
-                        // Fase 4.6: el handler de Ktor ya es una coroutine; no se necesita runBlocking.
-                        antiOversellSaga.executeRetractionSaga(
-                            productKey     = soldEvent.productKey,
-                            originChannel  = "shopify",
-                            externalIdMap  = AppStore.channelMappings[keyStr] ?: emptyMap(),
-                            remainingStock = updatedInv.stockVivo
-                        )
-                    }
                 }
+                if (shopifyEventId != null) processedEvents.markDone("shopify", shopifyEventId)
+            } catch (e: Exception) {
+                if (shopifyEventId != null) processedEvents.markFailed("shopify", shopifyEventId, e.message)
+                System.err.println("Error procesando webhook de Shopify: ${e.message}")
+                call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Error procesando orden de Shopify"))
+                return@post
             }
 
             call.respond(HttpStatusCode.OK, mapOf("status" to "processed", "message" to result.message))
@@ -833,14 +938,17 @@ fun Application.module() {
             val inboundEvents = metaWebhookReceiver.parseInboundPayload(bodyBytes.toString(Charsets.UTF_8))
 
             for (event in inboundEvents) {
-                // Idempotencia: Meta puede reentregar el mismo mensaje.
-                if (!processedEvents.markIfNew(event.channel, event.messageId)) continue
+                // Idempotencia en dos tiempos (Fase 7.4): Meta puede reentregar el mismo mensaje.
+                if (!processedEvents.tryStartProcessing(event.channel, event.messageId)) continue
                 pipelineScope.launch {
                     try {
                         recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
+                        processedEvents.markDone(event.channel, event.messageId)
                     } catch (e: CancellationException) {
+                        processedEvents.markFailed(event.channel, event.messageId, "Cancelled")
                         throw e
                     } catch (e: Exception) {
+                        processedEvents.markFailed(event.channel, event.messageId, e.message)
                         System.err.println("Error procesando mensaje de [${event.channel}] ${event.senderId}: ${e.message}")
                     }
                 }
