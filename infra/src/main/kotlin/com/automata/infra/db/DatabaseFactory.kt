@@ -10,6 +10,7 @@ import org.jetbrains.exposed.sql.DatabaseConfig
 import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.Transaction
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.slf4j.LoggerFactory
 import java.sql.Connection
 
 /** Valores permitidos para "origen" del cambio (constantes: nunca texto que venga del usuario). */
@@ -25,6 +26,8 @@ object Origen {
  * los triggers del esquema "tienda" lo guardan en tienda.historial.
  */
 object DatabaseFactory {
+
+    private val logger = LoggerFactory.getLogger(DatabaseFactory::class.java)
 
     fun connect(
         url: String = AppConfig.databaseUrl,
@@ -67,7 +70,7 @@ object DatabaseFactory {
                     .baselineOnMigrate(true)
                     .load()
                 val migrationResult = flyway.migrate()
-                System.out.println("Flyway: ${migrationResult.migrationsExecuted} migraciones aplicadas correctamente en esquema 'tienda'.")
+                logger.info("Flyway: ${migrationResult.migrationsExecuted} migraciones aplicadas correctamente en esquema 'tienda'.")
             } catch (e: Exception) {
                 throw IllegalStateException("M2: Error crítico ejecutando migraciones de base de datos con Flyway: ${e.message}", e)
             }

@@ -41,7 +41,10 @@ data class InventarioItem(
     val ubicacion: String? = null,
     val requiereReparacion: Boolean = false,
     val reparte: ReparteSocios = ReparteSocios.SIN_DEFINIR,   // reemplaza a tienda.inversion
-    val canalVenta: String? = null        // reemplaza a tienda.canal_venta
+    val canalVenta: String? = null,        // reemplaza a tienda.canal_venta
+    val archivadoEn: java.time.Instant? = null,
+    val archivadoPor: String? = null,
+    val motivoArchivo: String? = null
 ) {
     init {
         require(item.isNotBlank()) { "El nombre del ítem no puede estar vacío (key $key)" }

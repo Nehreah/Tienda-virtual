@@ -69,8 +69,25 @@ class OutboxWorker(
             }
             if (marked == 0) continue
 
-            val adapter = adapters.firstOrNull { it.channelName.equals(entry.channel, ignoreCase = true) }
-            if (adapter == null) {
+            if (!com.automata.infra.config.AppConfig.channelWriteEnabled) {
+                // F3 + C4: Interruptor de Seguridad de Escritura activo (Modo Solo Lectura)
+                transaction {
+                    OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
+                        row[OutboxTable.status] = "SKIPPED_READ_ONLY"
+                        row[OutboxTable.errorMessage] = "CHANNEL_WRITE_ENABLED es false (Modo Solo Lectura)"
+                    }
+                }
+                processedCount++
+                continue
+            }
+
+            val targetAdapters = if (entry.channel.equals("ALL", ignoreCase = true)) {
+                adapters
+            } else {
+                adapters.filter { it.channelName.equals(entry.channel, ignoreCase = true) }
+            }
+
+            if (targetAdapters.isEmpty()) {
                 transaction {
                     OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
                         row[OutboxTable.status] = "DEAD"
@@ -82,16 +99,33 @@ class OutboxWorker(
 
             try {
                 val productKey = ProductKey(entry.sku)
-                val result = adapter.setStock(productKey, entry.sku, entry.stockObjetivo, entry.version)
+                var allSuccess = true
+                var lastErrorMessage: String? = null
 
-                when (result) {
-                    is PortResult.Ok -> {
-                        transaction {
-                            OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
-                                row[OutboxTable.status] = "SENT"
-                            }
+                for (adapter in targetAdapters) {
+                    val result = adapter.setStock(productKey, entry.sku, entry.stockObjetivo, entry.version)
+                    if (result is PortResult.Failure) {
+                        val errorMsg = when (result) {
+                            is PortResult.Permanent -> "${result.code}: ${result.detail}"
+                            is PortResult.Transient -> result.cause
+                            is PortResult.RateLimited -> "Rate limited for ${result.retryAfterSeconds}s"
+                            PortResult.AuthExpired -> "Auth expired"
+                        }
+                        if (!errorMsg.contains("NO_IMPLEMENTADO", ignoreCase = true)) {
+                            allSuccess = false
+                            lastErrorMessage = errorMsg
+                        }
+                    }
+                }
+
+                if (allSuccess) {
+                    transaction {
+                        OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
+                            row[OutboxTable.status] = "SENT"
+                        }
+                        for (adapter in targetAdapters) {
                             val count = PublicacionesTable.update({
-                                (PublicacionesTable.sku eq entry.sku) and (PublicacionesTable.canal eq entry.channel)
+                                (PublicacionesTable.sku eq entry.sku) and (PublicacionesTable.canal eq adapter.channelName)
                             }) { row ->
                                 row[PublicacionesTable.stockPublicado] = entry.stockObjetivo
                                 row[PublicacionesTable.ultimaSincronizacion] = Instant.now()
@@ -99,7 +133,7 @@ class OutboxWorker(
                             if (count == 0) {
                                 PublicacionesTable.insert { row ->
                                     row[PublicacionesTable.sku] = entry.sku
-                                    row[PublicacionesTable.canal] = entry.channel
+                                    row[PublicacionesTable.canal] = adapter.channelName
                                     row[PublicacionesTable.externalId] = entry.sku
                                     row[PublicacionesTable.publicado] = true
                                     row[PublicacionesTable.stockPublicado] = entry.stockObjetivo
@@ -107,26 +141,18 @@ class OutboxWorker(
                                 }
                             }
                         }
-                        processedCount++
                     }
-                    is PortResult.Failure -> {
-                        val errorMsg = when (result) {
-                            is PortResult.Permanent -> "${result.code}: ${result.detail}"
-                            is PortResult.Transient -> result.cause
-                            is PortResult.RateLimited -> "Rate limited for ${result.retryAfterSeconds}s"
-                            PortResult.AuthExpired -> "Auth expired"
-                        }
-                        val isNotImplemented = errorMsg.contains("NO_IMPLEMENTADO", ignoreCase = true)
-                        val newIntentos = entry.attempts + 1
-                        val newStatus = if (isNotImplemented) "SENT" else if (newIntentos >= maxRetries) "DEAD" else "FAILED"
-                        val retryDelaySec = (10L * newIntentos * newIntentos)
+                    processedCount++
+                } else {
+                    val newIntentos = entry.attempts + 1
+                    val newStatus = if (newIntentos >= maxRetries) "DEAD" else "FAILED"
+                    val retryDelaySec = (10L * newIntentos * newIntentos)
 
-                        transaction {
-                            OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
-                                row[OutboxTable.status] = newStatus
-                                row[OutboxTable.errorMessage] = errorMsg
-                                row[OutboxTable.proximaEjecucion] = Instant.now().plusSeconds(retryDelaySec)
-                            }
+                    transaction {
+                        OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
+                            row[OutboxTable.status] = newStatus
+                            row[OutboxTable.errorMessage] = lastErrorMessage
+                            row[OutboxTable.proximaEjecucion] = Instant.now().plusSeconds(retryDelaySec)
                         }
                     }
                 }

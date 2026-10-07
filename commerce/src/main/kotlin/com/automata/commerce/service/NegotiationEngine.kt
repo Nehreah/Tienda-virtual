@@ -82,26 +82,18 @@ class NegotiationEngine(
             )
         }
 
-        // Si PM >= PP no es posible otorgar descuentos (Hallazgo A13)
+        // Si PM >= PP no es posible otorgar descuentos (Hallazgo A13).
+        // Nota: el guard de L0 ya descartó offeredAmount >= pp, por lo que
+        // aquí offeredAmount < pp siempre → solo puede rechazarse.
         if (pm >= pp) {
-            if (offeredAmount >= pp) {
-                return NegotiationDecision(
-                    accepted     = true,
-                    level        = NegotiationLevel.L0_PUBLISHED_PRICE,
-                    agreedPrice  = pp,
-                    counterOffer = null,
-                    message = "¡Excelente! Aceptamos tu oferta de ${pp.formatFormattedCop()}. Podemos proceder con el pago."
-                )
-            } else {
-                return NegotiationDecision(
-                    accepted     = false,
-                    level        = NegotiationLevel.REJECTED_BELOW_PM,
-                    agreedPrice  = null,
-                    counterOffer = pp,
-                    message      = "El precio de este producto es de ${pp.formatFormattedCop()} y no tiene margen de descuento.",
-                    isFinalCounter = true
-                )
-            }
+            return NegotiationDecision(
+                accepted     = false,
+                level        = NegotiationLevel.REJECTED_BELOW_PM,
+                agreedPrice  = null,
+                counterOffer = pp,
+                message      = "El precio de este producto es de ${pp.formatFormattedCop()} y no tiene margen de descuento.",
+                isFinalCounter = true
+            )
         }
 
         // Por debajo del PM: contraoferta escalonada sin revelar el piso.

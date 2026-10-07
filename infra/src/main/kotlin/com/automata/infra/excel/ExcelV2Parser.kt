@@ -5,6 +5,7 @@ import com.automata.commerce.model.EstadoItem
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import org.apache.poi.ss.usermodel.*
+import org.slf4j.LoggerFactory
 import java.io.InputStream
 
 data class ChannelOverride(
@@ -44,17 +45,19 @@ data class ExcelV2ImportResult(
  */
 class ExcelV2Parser {
 
+    private val logger = LoggerFactory.getLogger(ExcelV2Parser::class.java)
+
     fun parseExcel(inputStream: InputStream): ExcelV2ImportResult {
         val workbook = try {
             WorkbookFactory.create(inputStream)
         } catch (e: Exception) {
-            System.err.println("ExcelV2Parser: archivo no legible (${e::class.simpleName})")
+            logger.error("ExcelV2Parser: archivo no legible (${e::class.simpleName})", e)
             return fileFailure("El archivo no es un Excel (.xlsx) válido o está dañado.")
         }
         return try {
             workbook.use { readWorkbook(it) }
         } catch (e: Exception) {
-            System.err.println("ExcelV2Parser: error leyendo el contenido (${e::class.simpleName}: ${e.message})")
+            logger.error("ExcelV2Parser: error leyendo el contenido (${e::class.simpleName}: ${e.message})", e)
             fileFailure("No se pudo leer el contenido del Excel. Revisa que las hojas y las celdas no estén dañadas.")
         }
     }

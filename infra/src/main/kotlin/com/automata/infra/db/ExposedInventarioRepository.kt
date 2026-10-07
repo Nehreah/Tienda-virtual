@@ -10,15 +10,19 @@ import org.jetbrains.exposed.sql.IntegerColumnType
 import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.TextColumnType
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
+import org.jetbrains.exposed.sql.deleteWhere
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.statements.UpdateBuilder
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
+import org.slf4j.LoggerFactory
 import java.time.LocalDate
 
 class ExposedInventarioRepository : InventarioRepository {
+    private val logger = LoggerFactory.getLogger(ExposedInventarioRepository::class.java)
 
     override fun findAll(): List<InventarioItem> = transaction {
         InventarioTable.selectAll().orderBy(InventarioTable.key).map { it.toItem() }
@@ -116,7 +120,7 @@ class ExposedInventarioRepository : InventarioRepository {
             }
             jsonRes != null && jsonRes.contains("SUCCESS")
         } catch (e: Exception) {
-            System.err.println("Error en vender_unidades SQL: ${e.message}")
+            logger.error("Error en vender_unidades SQL: ${e.message}", e)
             false
         }
     }
@@ -136,10 +140,60 @@ class ExposedInventarioRepository : InventarioRepository {
                 }
                 jsonRes != null && jsonRes.contains("SUCCESS")
             } catch (e: Exception) {
-                System.err.println("Error en devolver_unidades SQL: ${e.message}")
+                logger.error("Error en devolver_unidades SQL: ${e.message}", e)
                 false
             }
         }
+
+    override fun archivar(
+        key: ProductKey,
+        usuario: String?,
+        motivo: String,
+        origen: String
+    ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
+        val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
+            ?: return@tx null
+        check(actual.estado != EstadoItem.VENDIDO) { "No se puede archivar el producto $key porque está Vendido." }
+        InventarioTable.update({ InventarioTable.key eq key.value }) {
+            it[InventarioTable.estado] = EstadoItem.INACTIVO.etiqueta
+            it[InventarioTable.archivadoEn] = java.time.Instant.now()
+            it[InventarioTable.archivadoPor] = usuario
+            it[InventarioTable.motivoArchivo] = motivo
+        }
+        InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+    }
+
+    override fun restaurar(
+        key: ProductKey,
+        usuario: String?,
+        origen: String
+    ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
+        val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
+            ?: return@tx null
+        InventarioTable.update({ InventarioTable.key eq key.value }) {
+            it[InventarioTable.estado] = EstadoItem.PUBLICADO.etiqueta
+            it[InventarioTable.archivadoEn] = null
+            it[InventarioTable.archivadoPor] = null
+            it[InventarioTable.motivoArchivo] = null
+        }
+        InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+    }
+
+    override fun eliminar(
+        key: ProductKey,
+        usuario: String?,
+        origen: String
+    ): Boolean = DatabaseFactory.tx(origen, usuario) {
+        val count = InventarioTable.deleteWhere { InventarioTable.key eq key.value }
+        count > 0
+    }
+
+    override fun hasHistoryOrReferences(key: ProductKey): Boolean = transaction {
+        val inVentas = VentasTable.select { VentasTable.key eq key.value }.count() > 0
+        val inReservas = ReservasTable.select { ReservasTable.productKey eq key.value }.count() > 0
+        val inConversaciones = ConversacionesTable.select { ConversacionesTable.activeProductKey eq key.value }.count() > 0
+        inVentas || inReservas || inConversaciones
+    }
 
     /**
      * Escribe todas las columnas editables. No toca la Key, ni costo_total ni precio_minimo
@@ -166,6 +220,9 @@ class ExposedInventarioRepository : InventarioRepository {
         this[InventarioTable.condicion] = item.condicion
         this[InventarioTable.cantidad] = item.cantidad
         this[InventarioTable.ubicacion] = item.ubicacion
+        this[InventarioTable.archivadoEn] = item.archivadoEn
+        this[InventarioTable.archivadoPor] = item.archivadoPor
+        this[InventarioTable.motivoArchivo] = item.motivoArchivo
     }
 
     private fun ResultRow.toItem() = InventarioItem(
@@ -190,6 +247,9 @@ class ExposedInventarioRepository : InventarioRepository {
         ubicacion = this[InventarioTable.ubicacion],
         requiereReparacion = this[InventarioTable.requiereReparacion],
         reparte = ReparteSocios(this[InventarioTable.pctAntonio], this[InventarioTable.pctJavier]),
-        canalVenta = this[InventarioTable.canalVenta]
+        canalVenta = this[InventarioTable.canalVenta],
+        archivadoEn = this[InventarioTable.archivadoEn],
+        archivadoPor = this[InventarioTable.archivadoPor],
+        motivoArchivo = this[InventarioTable.motivoArchivo]
     )
 }

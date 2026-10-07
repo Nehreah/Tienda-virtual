@@ -3,6 +3,7 @@ package com.automata.adapters.channels
 import com.automata.messaging.ports.CustomerIntentType
 import com.automata.shared.ProductKey
 import kotlinx.serialization.json.*
+import org.slf4j.LoggerFactory
 
 /**
  * Receptor de Webhooks oficial para WhatsApp Business, Instagram DM y Facebook Messenger.
@@ -11,6 +12,7 @@ import kotlinx.serialization.json.*
 class MetaWebhookReceiver(
     private val verifyToken: String
 ) {
+    private val logger = LoggerFactory.getLogger(MetaWebhookReceiver::class.java)
     data class InboundMessageEvent(
         val channel: String, // "whatsapp", "instagram", "messenger"
         val senderId: String,
@@ -128,7 +130,7 @@ class MetaWebhookReceiver(
                 }
             }
         } catch (e: Exception) {
-            System.err.println("Error parseando webhook de Meta: ${e.message}")
+            logger.error("Error parseando webhook de Meta: ${e.message}", e)
         }
         return events
     }

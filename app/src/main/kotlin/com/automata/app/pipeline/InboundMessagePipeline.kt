@@ -3,6 +3,7 @@ package com.automata.app.pipeline
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.model.Reservation
+import com.automata.commerce.ports.ReservationRepository
 import com.automata.commerce.service.NegotiationEngine
 import com.automata.messaging.model.Conversation
 import com.automata.messaging.model.ConversationState
@@ -26,6 +27,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
+import org.slf4j.LoggerFactory
 
 /** Acceso mínimo al catálogo e inventario que necesita el pipeline (en la app lo implementa AppStore). */
 interface PipelineCatalog {
@@ -62,6 +64,12 @@ data class PipelineOutcome(
  *  - Solo se hablan al cliente datos públicos (nombre, descripción, precio publicado, precio acordado).
  *  - El bot NUNCA confirma un pago por su cuenta: un comprobante escala a un asesor humano.
  *  - Mientras la conversación está escalada, el bot calla (y se reactiva solo tras [escalationTimeout]).
+ *
+ * Persistencia de reservas (F1/H1/H2):
+ *  - Si [reservationRepo] es non-null, todas las operaciones de reserva se delegan a la BD.
+ *    Al arrancar el servidor, [loadActiveReservations] re-hidrata el mapa en memoria desde la BD.
+ *  - Si [reservationRepo] es null (tests sin BD), el pipeline funciona completamente en memoria
+ *    como antes — todos los tests existentes siguen pasando sin cambios.
  */
 class InboundMessagePipeline(
     private val llm: LlmPort,
@@ -72,8 +80,11 @@ class InboundMessagePipeline(
     private val paymentInstructions: String = "Un asesor te enviará los datos de pago en breve.",
     private val reservationTtl: Duration = 15.minutes,
     private val proofHold: Duration = 12.hours,
-    private val escalationTimeout: Duration = 24.hours
+    private val escalationTimeout: Duration = 24.hours,
+    /** Puerto de persistencia de reservas. null = modo solo-memoria (para tests sin BD). */
+    private val reservationRepo: ReservationRepository? = null
 ) {
+    private val logger = LoggerFactory.getLogger(InboundMessagePipeline::class.java)
     // Bloqueos finos: por conversación y por SKU/producto (Fase F3 - Hallazgo A3)
     private val conversationLocks = ConcurrentHashMap<String, Mutex>()
     private val productLocks = ConcurrentHashMap<ProductKey, Mutex>()
@@ -84,8 +95,29 @@ class InboundMessagePipeline(
     private fun lockForProduct(key: ProductKey): Mutex =
         productLocks.computeIfAbsent(key) { Mutex() }
 
-    /** Reservas activas concurrentes por id. */
+    /**
+     * Mapa en memoria de reservas activas.
+     * - Sin BD: fuente de verdad única.
+     * - Con BD: caché local para leer el estado sin ir a la BD en cada mensaje.
+     *   Se re-hidrata al arrancar con [loadActiveReservations] y se mantiene sincronizado
+     *   en cada operación de escritura.
+     */
     private val reservations = ConcurrentHashMap<String, Reservation>()
+
+    /**
+     * Re-hidrata el mapa en memoria desde la BD al arrancar el servidor (H1).
+     * Llama a esto una sola vez desde Application.kt, antes de procesar el primer mensaje.
+     */
+    suspend fun loadActiveReservations() {
+        val repo = reservationRepo ?: return
+        try {
+            val active = repo.loadAllActive()
+            active.forEach { reservations[it.reservationId] = it }
+            logger.info("Reservas activas re-hidratadas desde BD: ${active.size}")
+        } catch (e: Exception) {
+            logger.error("Error re-hidratando reservas desde BD al arrancar: ${e.message}", e)
+        }
+    }
 
     suspend fun handle(
         channel: String,
@@ -107,7 +139,7 @@ class InboundMessagePipeline(
         val reply = outcome.reply ?: return@withContext outcome
         val sent = router.sendMessage(channel, senderId, reply)
         if (sent !is PortResult.Ok) {
-            System.err.println("No se pudo responder en [$channel] a $senderId: $sent")
+            logger.warn("No se pudo responder en [$channel] a $senderId: $sent")
         }
         outcome.copy(sendResult = sent)
     }
@@ -124,16 +156,33 @@ class InboundMessagePipeline(
      * Marca la reserva asociada a [conversationId] como CONFIRMED (no vence más).
      * La conversación pasa a PAID_CONFIRMED y la reserva se extiende 365 días para que
      * el barrido de vencidas NO la libere. Devuelve true si se encontró y confirmó.
+     *
+     * Idempotencia (H_payment): si ya está CONFIRMED, no hace nada y devuelve true.
      */
     suspend fun confirmPayment(conversationId: String, now: Instant = Clock.System.now()): Boolean =
         withContext(Dispatchers.IO) {
             val conv = conversations.findById(conversationId) ?: return@withContext false
             val reservationId = conv.currentReservationId ?: return@withContext false
             val reservation = reservations[reservationId] ?: return@withContext false
-            // Extender la expiración 1 año: ningún barrido la tocará.
-            val permanent = reservation.copy(expiresAt = now + 8_760.hours)  // 365 * 24 h
+
+            // Idempotencia: si ya está confirmada, solo actualizar la conversación.
+            if (reservation.status == Reservation.ReservationStatus.CONFIRMED) {
+                val alreadyPaid = conv.copy(state = ConversationState.PAID_CONFIRMED, lastUpdated = now)
+                conversations.save(alreadyPaid)
+                return@withContext true
+            }
+
+            val newExpiry = now + 8_760.hours  // 365 * 24 h
+            val permanent = reservation.copy(
+                expiresAt = newExpiry,
+                status = Reservation.ReservationStatus.CONFIRMED
+            )
             reservations[reservationId] = permanent
-            // Actualizar estado de la conversación a PAID_CONFIRMED.
+
+            // Persistir en BD si está disponible
+            reservationRepo?.extendExpiry(reservationId, newExpiry)
+            reservationRepo?.confirm(reservationId)
+
             val confirmed = conv.copy(state = ConversationState.PAID_CONFIRMED, lastUpdated = now)
             conversations.save(confirmed)
             true
@@ -340,6 +389,13 @@ class InboundMessagePipeline(
                 createdAt = now,
                 expiresAt = now + reservationTtl
             )
+            // Persistir en BD si está disponible (H1/H2)
+            val saved = reservationRepo?.tryReserve(reservation) ?: true
+            if (!saved) {
+                // La BD rechazó la reserva (conflicto de concurrencia) → revertir stock en memoria
+                catalog.saveInventory(inv)
+                return@withLock null
+            }
             reservations[reservation.reservationId] = reservation
             reservation
         }
@@ -351,6 +407,7 @@ class InboundMessagePipeline(
         if (r.productKey == newKey) return conv
         releaseStock(r)
         reservations.remove(id)
+        reservationRepo?.release(id)
         return conv.copy(currentReservationId = null, agreedPriceCop = null, state = ConversationState.NEGOTIATING)
     }
 
@@ -358,13 +415,45 @@ class InboundMessagePipeline(
         if (holdReservation) {
             val r = conv.currentReservationId?.let { reservations[it] }
             if (r != null && r.status == Reservation.ReservationStatus.ACTIVE) {
-                reservations[r.reservationId] = r.copy(expiresAt = now + proofHold)
+                val newExpiry = now + proofHold
+                reservations[r.reservationId] = r.copy(expiresAt = newExpiry)
+                reservationRepo?.extendExpiry(r.reservationId, newExpiry)
             }
         }
         return answer(conv.copy(state = ConversationState.ESCALATED_HUMAN), now, reply, productOf(conv))
     }
 
     private suspend fun sweepExpired(now: Instant) {
+        if (reservationRepo != null) {
+            // Modo BD: la BD es la fuente de verdad para expirar (H2)
+            try {
+                val expired = reservationRepo.expireDue(now)
+                for (r in expired) {
+                    releaseStock(r)
+                    reservations.remove(r.reservationId)
+                    val c = conversations.findById(r.conversationId) ?: continue
+                    if (c.currentReservationId == r.reservationId) {
+                        val newState = when (c.state) {
+                            ConversationState.RESERVED, ConversationState.PAYMENT_PENDING -> ConversationState.NEGOTIATING
+                            else -> c.state
+                        }
+                        conversations.save(c.copy(state = newState, currentReservationId = null, agreedPriceCop = null, lastUpdated = now))
+                    }
+                }
+            } catch (e: Exception) {
+                logger.error("Error expirando reservas en BD: ${e.message}", e)
+                // Fallback: expirar desde memoria
+                sweepExpiredInMemory(now)
+            }
+        } else {
+            sweepExpiredInMemory(now)
+        }
+        // Limpiar candados inactivos (evita crecimiento en memoria)
+        conversationLocks.entries.removeIf { !it.value.isLocked }
+        productLocks.entries.removeIf { !it.value.isLocked }
+    }
+
+    private suspend fun sweepExpiredInMemory(now: Instant) {
         val expired = reservations.values.filter { it.status == Reservation.ReservationStatus.ACTIVE && now >= it.expiresAt }
         for (r in expired) {
             releaseStock(r)
@@ -378,9 +467,6 @@ class InboundMessagePipeline(
                 conversations.save(c.copy(state = newState, currentReservationId = null, agreedPriceCop = null, lastUpdated = now))
             }
         }
-        // Limpiar candados inactivos (evita crecimiento en memoria)
-        conversationLocks.entries.removeIf { !it.value.isLocked }
-        productLocks.entries.removeIf { !it.value.isLocked }
     }
 
     private suspend fun releaseStock(r: Reservation) {

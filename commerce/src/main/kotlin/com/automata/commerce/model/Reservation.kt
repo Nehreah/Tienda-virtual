@@ -22,6 +22,6 @@ data class Reservation(
         get() = Clock.System.now() >= expiresAt || status == ReservationStatus.EXPIRED
 
     enum class ReservationStatus {
-        ACTIVE, CONFIRMED_SALE, EXPIRED, CANCELLED
+        ACTIVE, CONFIRMED, CANCELLED, EXPIRED, CONSUMED
     }
 }

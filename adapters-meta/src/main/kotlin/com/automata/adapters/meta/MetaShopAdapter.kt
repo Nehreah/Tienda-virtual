@@ -10,13 +10,21 @@ import com.automata.shared.ProductKey
  * Adaptador de Catálogo para Meta (Facebook/Instagram/WhatsApp Commerce Manager).
  * Operará en modo CATALOG_ONLY cuando el checkout nativo no esté disponible en el país.
  */
+import com.automata.commerce.ports.RemoteCatalogPort
+import com.automata.commerce.ports.RemoteProductItem
+
 class MetaShopAdapter(
     private val catalogId: String,
     private val accessToken: String,
     private val countryCode: String = "CO"
-) : CatalogPublishingPort {
+) : CatalogPublishingPort, RemoteCatalogPort {
 
     override val channelName: String = "meta_catalogo"
+
+    override suspend fun fetchRemoteProducts(): List<RemoteProductItem> {
+        if (catalogId.isBlank() || accessToken.isBlank()) return emptyList()
+        return emptyList()
+    }
 
     val currentMode: ShopMode
         get() = CapabilityDetector.detectMode(countryCode, accessToken.isNotBlank())

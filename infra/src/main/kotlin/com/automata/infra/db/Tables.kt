@@ -58,6 +58,9 @@ object InventarioTable : Table("tienda.inventario") {
     val condicion = text("condicion").nullable()
     val cantidad = integer("cantidad").default(1)
     val ubicacion = text("ubicacion").nullable()
+    val archivadoEn = timestamp("archivado_en").nullable()
+    val archivadoPor = text("archivado_por").nullable()
+    val motivoArchivo = text("motivo_archivo").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }
@@ -195,6 +198,21 @@ object ImportacionesTable : Table("tienda.importaciones") {
     val estado = text("estado").default("PENDING")
     val conteos = jsonbText("conteos").nullable()
     val errores = jsonbText("errores").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object EventosSinResolverTable : Table("tienda.eventos_sin_resolver") {
+    val id = long("id").autoIncrement()
+    val canal = text("canal")
+    val tipo = text("tipo")
+    val referencia = text("referencia").nullable()
+    val sku = text("sku").nullable()
+    val motivo = text("motivo")
+    val payload = jsonbText("payload")
+    val estado = text("estado").default("PENDIENTE")
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val resueltoEn = timestamp("resuelto_en").nullable()
 
     override val primaryKey = PrimaryKey(id)
 }

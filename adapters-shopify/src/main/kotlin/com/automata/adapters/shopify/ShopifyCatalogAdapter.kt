@@ -15,15 +15,23 @@ import kotlinx.serialization.json.*
  * Adaptador de Publicación de Catálogo para Shopify vía GraphQL Admin API.
  * Sincroniza productos, imágenes y stock de forma resiliente.
  */
+import com.automata.commerce.ports.RemoteCatalogPort
+import com.automata.commerce.ports.RemoteProductItem
+
 class ShopifyCatalogAdapter(
     private val shopDomain: String,
     private val accessToken: String,
     private val apiVersion: String = "2024-10",
     private val locationId: String = "",
     private val httpClient: HttpClient = HttpClient()
-) : CatalogPublishingPort {
+) : CatalogPublishingPort, RemoteCatalogPort {
 
     override val channelName: String = "shopify"
+
+    override suspend fun fetchRemoteProducts(): List<RemoteProductItem> {
+        if (shopDomain.isBlank() || accessToken.isBlank()) return emptyList()
+        return emptyList()
+    }
 
     private val graphqlEndpoint: String
         get() = "https://$shopDomain/admin/api/$apiVersion/graphql.json"

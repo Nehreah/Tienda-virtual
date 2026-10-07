@@ -23,7 +23,8 @@ class AntiOversellSaga(
         productKey: ProductKey,
         originChannel: String,
         externalIdMap: Map<String, String>, // channelName -> externalId
-        remainingStock: Int
+        remainingStock: Int,
+        expectedVersion: Long = 0L          // (H5) versión real del ítem; 0L = sin control optimista
     ): SagaResult {
         val results = mutableMapOf<String, Boolean>()
 
@@ -34,9 +35,9 @@ class AntiOversellSaga(
             val externalId = externalIdMap[channel]
             if (externalId != null) {
                 val res = if (remainingStock <= 0) {
-                    port.setStock(productKey, externalId, 0, expectedVersion = 0L)
+                    port.setStock(productKey, externalId, 0, expectedVersion)
                 } else {
-                    port.setStock(productKey, externalId, remainingStock, expectedVersion = 0L)
+                    port.setStock(productKey, externalId, remainingStock, expectedVersion)
                 }
                 results[channel] = res is PortResult.Ok
             }

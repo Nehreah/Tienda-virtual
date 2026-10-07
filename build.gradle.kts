@@ -15,11 +15,12 @@ subprojects {
         jvmToolchain(17)
     }
 
+    val libsCatalog = rootProject.extensions.getByType<org.gradle.api.artifacts.VersionCatalogsExtension>().named("libs")
+
     dependencies {
-        val junitVersion = "5.10.1"
-        "testImplementation"("org.junit.jupiter:junit-jupiter-api:$junitVersion")
-        "testRuntimeOnly"("org.junit.jupiter:junit-jupiter-engine:$junitVersion")
-        "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
+        "testImplementation"(libsCatalog.findLibrary("junit-jupiter-api").get())
+        "testRuntimeOnly"(libsCatalog.findLibrary("junit-jupiter-engine").get())
+        "testRuntimeOnly"(libsCatalog.findLibrary("junit-platform-launcher").get())
     }
 
     tasks.withType<Test> {

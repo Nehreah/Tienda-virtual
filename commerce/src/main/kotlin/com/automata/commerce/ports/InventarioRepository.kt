@@ -59,4 +59,24 @@ interface InventarioRepository {
      * Devuelve N unidades atómicamente en la BD usando tienda.devolver_unidades.
      */
     fun devolverUnidades(orderId: String, lineId: String?, quantity: Int): Boolean = true
+
+    /**
+     * Archiva un producto: estado pasa a Inactivo y guarda archivadoEn, archivadoPor, motivoArchivo (C2).
+     */
+    fun archivar(key: ProductKey, usuario: String?, motivo: String, origen: String): InventarioItem?
+
+    /**
+     * Restaura un producto archivado: vuelve a Publicado y limpia campos de archivado (C2).
+     */
+    fun restaurar(key: ProductKey, usuario: String?, origen: String): InventarioItem?
+
+    /**
+     * Elimina definitivamente una fila del inventario. Devuelve false si no existe (C2).
+     */
+    fun eliminar(key: ProductKey, usuario: String?, origen: String): Boolean
+
+    /**
+     * Comprueba si el producto tiene historial o referencias en ventas, reservas o conversaciones (C2).
+     */
+    fun hasHistoryOrReferences(key: ProductKey): Boolean
 }

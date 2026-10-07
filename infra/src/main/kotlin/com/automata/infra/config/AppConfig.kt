@@ -3,6 +3,7 @@ package com.automata.infra.config
 import java.io.File
 import java.util.Properties
 import java.util.concurrent.ConcurrentHashMap
+import org.slf4j.LoggerFactory
 
 /**
  * Entorno de ejecución (variable APP_ENV).
@@ -55,6 +56,7 @@ object ConfigPlaceholders {
  */
 object AppConfig {
 
+    private val logger = LoggerFactory.getLogger(AppConfig::class.java)
     private val localProps = Properties()
 
     init {
@@ -63,7 +65,7 @@ object AppConfig {
             try {
                 propsFile.inputStream().use { localProps.load(it) }
             } catch (e: Exception) {
-                System.err.println("Advertencia: No se pudo cargar local.properties: ${e.message}")
+                logger.warn("Advertencia: No se pudo cargar local.properties: ${e.message}")
             }
         }
     }
@@ -87,7 +89,7 @@ object AppConfig {
         if (ConfigPlaceholders.isPlaceholder(raw)) {
             // Solo se escribe el NOMBRE de la variable, nunca su valor.
             if (warnedPlaceholders.add(key)) {
-                System.err.println("ADVERTENCIA: $key contiene un valor de ejemplo (placeholder); se ignora y esa integración queda sin configurar.")
+                logger.warn("ADVERTENCIA: $key contiene un valor de ejemplo (placeholder); se ignora y esa integración queda sin configurar.")
             }
             return defaultValue
         }
@@ -110,6 +112,12 @@ object AppConfig {
     val databaseUser: String get() = get("DATABASE_USER")
     val databasePassword: String get() = get("DATABASE_PASSWORD")
     val databaseConfigured: Boolean get() = databaseUrl.isNotBlank()
+
+    /**
+     * Interruptor de Seguridad de Escritura en Canales (Fase F3 + C4).
+     * Si es false (por defecto), las sincronizaciones hacia Shopify/Meta se realizan en modo Solo Lectura.
+     */
+    val channelWriteEnabled: Boolean get() = get("CHANNEL_WRITE_ENABLED", "false").toBooleanStrictOrNull() ?: false
 
     // Shopify Config
     val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN")

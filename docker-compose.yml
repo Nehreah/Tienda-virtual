@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - DATABASE_URL=jdbc:postgresql://db:5432/tiendadb
+      - DATABASE_USER=tiendauser
+      - DATABASE_PASSWORD=tiendapassword
+      - DASHBOARD_USER=admin
+      - DASHBOARD_PASSWORD=SuperSecretDashboardPass123!
+      - CHANNEL_WRITE_ENABLED=false
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_DB=tiendadb
+      - POSTGRES_USER=tiendauser
+      - POSTGRES_PASSWORD=tiendapassword
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tiendauser -d tiendadb"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
