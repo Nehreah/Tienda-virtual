@@ -12,6 +12,8 @@ import io.ktor.client.request.*
 import io.ktor.client.statement.*
 import io.ktor.http.*
 import io.ktor.serialization.kotlinx.json.*
+import io.ktor.client.plugins.*
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -84,6 +86,11 @@ class GeminiLlmAdapter(
             install(ContentNegotiation) {
                 json(jsonSerializer)
             }
+            install(HttpTimeout) {
+                requestTimeoutMillis = timeoutMs
+                connectTimeoutMillis = timeoutMs
+                socketTimeoutMillis = timeoutMs
+            }
         }
     }
 
@@ -143,6 +150,10 @@ class GeminiLlmAdapter(
                 dailyCallCount.incrementAndGet()
 
                 val productKeysStr = availableProducts.joinToString(", ") { it.value }
+                val sanitizedUserMessage = userMessage
+                    .replace("</user_message>", "&lt;/user_message&gt;")
+                    .replace("\"\"\"", "\\\"\\\"\\\"")
+
                 val promptText = """
                     You are an intent parser for an e-commerce catalog in Colombia.
                     Available product keys: [$productKeysStr]
@@ -166,7 +177,7 @@ class GeminiLlmAdapter(
                     Customer Message:
                     \"\"\"
                     <user_message>
-                    $userMessage
+                    $sanitizedUserMessage
                     </user_message>
                     \"\"\"
                 """.trimIndent()
@@ -181,9 +192,10 @@ class GeminiLlmAdapter(
                     )
                 )
 
-                val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent?key=$apiKey"
+                val url = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
                 val response: HttpResponse = client.post(url) {
                     contentType(ContentType.Application.Json)
+                    header("x-goog-api-key", apiKey)
                     setBody(requestPayload)
                 }
 
@@ -214,6 +226,8 @@ class GeminiLlmAdapter(
                     offeredPrice = price,
                     rawText = userMessage
                 )
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 null
             }

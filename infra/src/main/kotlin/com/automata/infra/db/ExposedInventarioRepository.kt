@@ -6,7 +6,10 @@ import com.automata.commerce.model.ReparteSocios
 import com.automata.commerce.ports.InventarioRepository
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
+import org.jetbrains.exposed.sql.IntegerColumnType
+import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.ResultRow
+import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
@@ -83,6 +86,59 @@ class ExposedInventarioRepository : InventarioRepository {
                 it[InventarioTable.estado] = reabierto.estado.etiqueta
             }
             InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+        }
+
+    override fun venderUnidades(
+        key: ProductKey,
+        quantity: Int,
+        eventId: String?,
+        origen: String,
+        precioUnit: Money,
+        reservaId: String?,
+        orderId: String?,
+        lineId: String?
+    ): Boolean = DatabaseFactory.tx(origen, "system") {
+        try {
+            val jsonRes = exec(
+                "SELECT tienda.vender_unidades(?, ?, ?, ?, ?, ?, ?, ?)",
+                listOf(
+                    TextColumnType() to key.value,
+                    IntegerColumnType() to quantity,
+                    TextColumnType() to (eventId ?: ""),
+                    TextColumnType() to origen,
+                    LongColumnType() to precioUnit.amountInCop,
+                    TextColumnType() to (reservaId ?: ""),
+                    TextColumnType() to (orderId ?: ""),
+                    TextColumnType() to (lineId ?: "")
+                )
+            ) { rs ->
+                if (rs.next()) rs.getString(1) else null
+            }
+            jsonRes != null && jsonRes.contains("SUCCESS")
+        } catch (e: Exception) {
+            System.err.println("Error en vender_unidades SQL: ${e.message}")
+            false
+        }
+    }
+
+    override fun devolverUnidades(orderId: String, lineId: String?, quantity: Int): Boolean =
+        DatabaseFactory.tx("shopify", "system") {
+            try {
+                val jsonRes = exec(
+                    "SELECT tienda.devolver_unidades(?, ?, ?)",
+                    listOf(
+                        TextColumnType() to orderId,
+                        TextColumnType() to (lineId ?: ""),
+                        IntegerColumnType() to quantity
+                    )
+                ) { rs ->
+                    if (rs.next()) rs.getString(1) else null
+                }
+                jsonRes != null && jsonRes.contains("SUCCESS")
+            } catch (e: Exception) {
+                System.err.println("Error en devolver_unidades SQL: ${e.message}")
+                false
+            }
         }
 
     /**

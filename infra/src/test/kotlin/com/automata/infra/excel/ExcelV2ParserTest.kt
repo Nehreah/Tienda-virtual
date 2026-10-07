@@ -203,5 +203,16 @@ class ExcelV2ParserTest {
         assertEquals("Estante B-12", p.location)
         assertEquals("Excelente estado", p.description)
     }
+
+    @Test
+    fun `A6 grandes numeros en formulas y celdas numericas no usan notacion cientifica`() {
+        val r = parse(xlsx(listOf(
+            listOf("PROD-LARGE", "Televisor OLED 75", "12345678", "10000000", "8000000", "Publicado")
+        )))
+        assertNull(r.fileError)
+        assertEquals(1, r.products.size)
+        assertEquals(12_345_678L, r.products[0].publishedPrice.amountInCop)
+        assertEquals(10_000_000L, r.products[0].minimumPrice.amountInCop)
+    }
 }
 

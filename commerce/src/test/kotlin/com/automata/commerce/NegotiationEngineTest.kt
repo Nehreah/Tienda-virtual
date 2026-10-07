@@ -132,4 +132,19 @@ class NegotiationEngineTest {
         assertNull(d.counterOffer)
         assertTrue(d.isFinalCounter)
     }
+
+    @Test
+    fun `T44 property test counter offer is always greater than PM if PM less than PP and never exceeds PP`() {
+        // PM = PP
+        val equalPrices = sampleProduct.copy(publishedPrice = Money.of(100000), minimumPrice = Money.of(100000))
+        val dEqual = engine.evaluateOffer(equalPrices, Money.of(80000))
+        assertFalse(dEqual.accepted)
+        assertEquals(Money.of(100000), dEqual.counterOffer)
+
+        // PM > PP
+        val pmGreater = sampleProduct.copy(publishedPrice = Money.of(100000), minimumPrice = Money.of(110000))
+        val dGreater = engine.evaluateOffer(pmGreater, Money.of(80000))
+        assertFalse(dGreater.accepted)
+        assertEquals(Money.of(100000), dGreater.counterOffer)
+    }
 }

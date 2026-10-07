@@ -82,7 +82,7 @@ class ExcelGeneratorTest {
             )
         )
 
-        val targetFile = java.io.File("/home/nehreah/Tienda/NEGOCIO.xlsx")
+        val targetFile = java.io.File("NEGOCIO.xlsx")
         targetFile.outputStream().use { os ->
             ExcelGenerator.generateWorkbookFromItems(sampleItems, os)
         }

@@ -121,6 +121,8 @@ object ConversacionesTable : Table("tienda.conversaciones") {
     val counterOfferCount = integer("counter_offer_count").default(0)
     val pendingCounterCop = long("pending_counter_cop").nullable()
     val pendingCounterAt = timestamp("pending_counter_at").nullable()
+    val currentReservationId = text("current_reservation_id").nullable()
+    val mensajes = jsonbText("mensajes").nullable()
     val lastUpdated = timestamp("last_updated")
 
     override val primaryKey = PrimaryKey(conversationId)
@@ -132,24 +134,69 @@ object ReservasTable : Table("tienda.reservas") {
     val productKey = text("product_key")
     val quantity = integer("quantity").default(1)
     val status = text("status").default("ACTIVE")
-    val createdAt = timestamp("created_at")
     val expiresAt = timestamp("expires_at")
+    val orderRef = text("order_ref").nullable()
+    val createdAt = timestamp("created_at")
+    val updatedAt = timestamp("updated_at")
 
     override val primaryKey = PrimaryKey(reservationId)
 }
 
 object OutboxTable : Table("tienda.outbox") {
     val eventId = text("event_id")
-    val channel = text("channel")
-    val recipientId = text("recipient_id")
-    val payloadJson = text("payload_json")
-    val status = text("status").default("PENDING")
-    val attempts = integer("attempts").default(0)
-    val createdAt = timestamp("created_at").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
-    val lastAttemptAt = timestamp("last_attempt_at").nullable()
-    val sentAt = timestamp("sent_at").nullable()
-    val errorMessage = text("error_message").nullable()
+    val tipo = text("tipo").default("stock_changed")
+    val sku = text("sku")
+    val channel = text("canal")
+    val recipientId = text("recipient_id").nullable()
+    val version = long("version").default(1L)
+    val stockObjetivo = integer("stock_objetivo").default(0)
+    val payloadJson = text("payload_json").nullable()
+    val status = text("estado").default("PENDING")
+    val attempts = integer("intentos").default(0)
+    val proximaEjecucion = timestamp("proxima_ejecucion").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val createdAt = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val lastAttemptAt = timestamp("actualizado_en").nullable()
+    val errorMessage = text("ultimo_error").nullable()
 
     override val primaryKey = PrimaryKey(eventId)
 }
+
+object EventosEntrantesTable : Table("tienda.eventos_entrantes") {
+    val id = text("id")
+    val canal = text("canal")
+    val eventoExternoId = text("evento_externo_id")
+    val payload = jsonbText("payload")
+    val estado = text("estado").default("RECIBIDO")
+    val intentos = integer("intentos").default(0)
+    val proximaEjecucion = timestamp("proxima_ejecucion").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val errorMsg = text("error_msg").nullable()
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val procesadoEn = timestamp("procesado_en").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object PublicacionesTable : Table("tienda.publicaciones") {
+    val sku = text("sku")
+    val canal = text("canal")
+    val externalId = text("external_id")
+    val publicado = bool("publicado").default(true)
+    val stockPublicado = integer("stock_publicado").default(0)
+    val ultimaSincronizacion = timestamp("ultima_sincronizacion").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+
+    override val primaryKey = PrimaryKey(sku, canal)
+}
+
+object ImportacionesTable : Table("tienda.importaciones") {
+    val id = text("id")
+    val usuario = text("usuario")
+    val fecha = timestamp("fecha").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val hashArchivo = text("hash_archivo")
+    val estado = text("estado").default("PENDING")
+    val conteos = jsonbText("conteos").nullable()
+    val errores = jsonbText("errores").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
 

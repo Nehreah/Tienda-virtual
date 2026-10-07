@@ -202,7 +202,8 @@ private fun recordDeal(outcome: PipelineOutcome) {
         offeredPrice = outcome.amountCop?.let { "${Money.of(it).formatFormattedCop()} COP" } ?: "—",
         dealState = state,
         dealStateLabel = outcome.dealLabel,
-        timestamp = java.time.LocalTime.now().withSecond(0).withNano(0).toString()
+        timestamp = java.time.LocalTime.now().withSecond(0).withNano(0).toString(),
+        productKey = conv.activeProductKey?.value ?: ""
     )
     synchronized(AppStore.chatDeals) {
         AppStore.chatDeals.removeAll { it.id == deal.id }
@@ -446,7 +447,11 @@ fun Application.module() {
         router = channelRouter,
         paymentInstructions = AppConfig.paymentInstructions
     )
-    // Meta exige responder 200 rápido: los mensajes se procesan en segundo plano.
+
+    val inboundWorker = if (AppStore.databaseConnected) com.automata.app.workers.InboundWebhookWorker(inboundPipeline) else null
+    val outboxWorker = if (AppStore.databaseConnected) com.automata.app.workers.OutboxWorker(listOf(shopifyAdapter, metaCatalogAdapter)) else null
+
+    // Meta exige responder 200 rápido: los mensajes y los workers se procesan en segundo plano.
     val pipelineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     pipelineScope.launch {
         while (isActive) {
@@ -456,8 +461,29 @@ fun Application.module() {
             }
         }
     }
+    if (inboundWorker != null) {
+        pipelineScope.launch {
+            while (isActive) {
+                delay(5_000)
+                try { inboundWorker.processBatch() } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                    System.err.println("Error procesando worker de webhooks entrantes: ${e.message}")
+                }
+            }
+        }
+    }
+    if (outboxWorker != null) {
+        pipelineScope.launch {
+            while (isActive) {
+                delay(5_000)
+                try { outboxWorker.processBatch() } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                    System.err.println("Error procesando worker de outbox: ${e.message}")
+                }
+            }
+        }
+    }
     environment.monitor.subscribe(ApplicationStopping) { pipelineScope.cancel() }
     val excelParser = ExcelV2Parser()
+
 
     routing {
         // 1. Dashboard Web Interactivo
@@ -753,10 +779,27 @@ fun Application.module() {
                 AppStore.chatDeals.firstOrNull { it.id == dealId }
             }
 
+            // C5: Idempotencia en confirmar-pago. Si ya está verificado/confirmado, no descuenta stock de nuevo.
+            if (deal?.dealState == DealState.PENDIENTE_ENVIO) {
+                call.respondRedirect("/", permanent = false)
+                return@post
+            }
+
+            // A5: Validar que el precio de venta sea > 0
+            val priceClean = deal?.offeredPrice?.replace("[^0-9]".toRegex(), "")?.toLongOrNull() ?: 0L
+            if (deal != null && priceClean <= 0) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "El precio de venta no puede ser 0 (A5)"))
+                return@post
+            }
+
             if (deal != null) {
                 val channelName = deal.channel
                 val foundProduct = synchronized(AppStore.products) {
-                    AppStore.products.values.firstOrNull { it.itemName.equals(deal.productName, ignoreCase = true) }
+                    if (deal.productKey.isNotBlank()) {
+                        AppStore.products[deal.productKey]
+                    } else {
+                        AppStore.products.values.firstOrNull { it.itemName.equals(deal.productName, ignoreCase = true) }
+                    }
                 }
                 if (foundProduct != null) {
                     // Actualizar estado en AppStore.inventory
@@ -861,8 +904,11 @@ fun Application.module() {
                 for (soldEvent in result.emittedEvents) {
                     val keyStr = soldEvent.productKey.value
                     if (soldEvent.quantity < 0) {
-                        // Cancelación: devolver stock (sustraer de unidadesVendidas, sin bajar de 0).
+                        // Cancelación: devolver stock en BD y luego en AppStore (C1, M4)
                         val returnQty = -soldEvent.quantity
+                        if (dbRepository != null) {
+                            dbRepository.devolverUnidades(soldEvent.orderId ?: "", null, returnQty)
+                        }
                         synchronized(AppStore.inventory) {
                             val inv = AppStore.inventory[keyStr]
                             if (inv != null) {
@@ -873,6 +919,17 @@ fun Application.module() {
                             }
                         }
                     } else {
+                        // Venta de Shopify: persistir en BD primero (C1, C7)
+                        if (dbRepository != null) {
+                            dbRepository.venderUnidades(
+                                key = soldEvent.productKey,
+                                quantity = soldEvent.quantity,
+                                eventId = soldEvent.eventId,
+                                origen = "shopify",
+                                precioUnit = soldEvent.soldPrice,
+                                orderId = soldEvent.orderId
+                            )
+                        }
                         val updatedInv = synchronized(AppStore.inventory) {
                             AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)
                                 ?.also { AppStore.inventory[keyStr] = it }

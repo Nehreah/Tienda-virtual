@@ -22,17 +22,11 @@ class MetaShopAdapter(
         get() = CapabilityDetector.detectMode(countryCode, accessToken.isNotBlank())
 
     override suspend fun publishProduct(product: PublicProductDto, quantity: Int): PortResult<String> {
-        if (currentMode == ShopMode.DISABLED) {
-            return PortResult.Permanent("META_DISABLED", "Integración con Meta inhabilitada por falta de credenciales")
-        }
-
-        // Mapeo oficial v5.3 (9 campos obligatorios): id, title, description, availability, condition, price, link, image_link, brand
-        val metaItemId = "meta_${product.key.value}"
-        return PortResult.Ok(metaItemId)
+        return PortResult.Permanent("NO_IMPLEMENTADO", "Adaptador de Meta Catalog pendiente de integración completa (M12)")
     }
 
     override suspend fun updateProduct(product: PublicProductDto): PortResult<Unit> {
-        return PortResult.Ok(Unit)
+        return PortResult.Permanent("NO_IMPLEMENTADO", "Adaptador de Meta Catalog pendiente de integración completa (M12)")
     }
 
     override suspend fun setStock(
@@ -41,7 +35,7 @@ class MetaShopAdapter(
         quantity: Int,
         expectedVersion: Long
     ): PortResult<Unit> {
-        return PortResult.Ok(Unit)
+        return PortResult.Permanent("NO_IMPLEMENTADO", "Adaptador de Meta Catalog pendiente de integración completa (M12)")
     }
 
     override suspend fun unpublishProduct(productKey: ProductKey, externalId: String): PortResult<Unit> {

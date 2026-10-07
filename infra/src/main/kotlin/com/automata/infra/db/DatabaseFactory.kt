@@ -1,8 +1,10 @@
 package com.automata.infra.db
 
 import com.automata.infra.config.AppConfig
+import com.automata.infra.config.AppEnv
 import com.zaxxer.hikari.HikariConfig
 import com.zaxxer.hikari.HikariDataSource
+import org.flywaydb.core.Flyway
 import org.jetbrains.exposed.sql.Database
 import org.jetbrains.exposed.sql.DatabaseConfig
 import org.jetbrains.exposed.sql.TextColumnType
@@ -18,7 +20,7 @@ object Origen {
 }
 
 /**
- * Conexión a Supabase (PostgreSQL) con pool Hikari + Exposed.
+ * Conexión a Supabase (PostgreSQL) con pool Hikari + Flyway + Exposed.
  * [tx] abre una transacción y le dice a la base quién y desde dónde cambia los datos;
  * los triggers del esquema "tienda" lo guardan en tienda.historial.
  */
@@ -27,11 +29,20 @@ object DatabaseFactory {
     fun connect(
         url: String = AppConfig.databaseUrl,
         user: String = AppConfig.databaseUser,
-        password: String = AppConfig.databasePassword
+        password: String = AppConfig.databasePassword,
+        runMigrations: Boolean = true
     ) {
         check(url.isNotBlank()) {
             "Falta DATABASE_URL. Configúrala en local.properties o como variable de entorno (ver local.properties.example)."
         }
+
+        // M11: En producción sslmode=require es obligatorio
+        if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+            check(url.contains("sslmode=require", ignoreCase = true) || url.contains("ssl=true", ignoreCase = true)) {
+                "M11: Conexión a la base de datos rechazada. En producción sslmode=require es OBLIGATORIO en la URL."
+            }
+        }
+
         val cfg = HikariConfig().apply {
             poolName = "tienda-pool"
             driverClassName = "org.postgresql.Driver"
@@ -43,8 +54,27 @@ object DatabaseFactory {
             transactionIsolation = "TRANSACTION_READ_COMMITTED"
             validate()
         }
+
+        val dataSource = HikariDataSource(cfg)
+
+        // M2: Ejecutor de Migraciones Flyway
+        if (runMigrations) {
+            try {
+                val flyway = Flyway.configure()
+                    .dataSource(dataSource)
+                    .locations("classpath:db/migrations")
+                    .schemas("tienda")
+                    .baselineOnMigrate(true)
+                    .load()
+                val migrationResult = flyway.migrate()
+                System.out.println("Flyway: ${migrationResult.migrationsExecuted} migraciones aplicadas correctamente en esquema 'tienda'.")
+            } catch (e: Exception) {
+                throw IllegalStateException("M2: Error crítico ejecutando migraciones de base de datos con Flyway: ${e.message}", e)
+            }
+        }
+
         Database.connect(
-            HikariDataSource(cfg),
+            dataSource,
             databaseConfig = DatabaseConfig { defaultIsolationLevel = Connection.TRANSACTION_READ_COMMITTED }
         )
     }

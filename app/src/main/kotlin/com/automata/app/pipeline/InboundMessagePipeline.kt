@@ -15,11 +15,14 @@ import com.automata.messaging.ports.ParsedCustomerIntent
 import com.automata.shared.Money
 import com.automata.shared.PortResult
 import com.automata.shared.ProductKey
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.datetime.Clock
 import kotlinx.datetime.Instant
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.hours
 import kotlin.time.Duration.Companion.minutes
@@ -71,15 +74,18 @@ class InboundMessagePipeline(
     private val proofHold: Duration = 12.hours,
     private val escalationTimeout: Duration = 24.hours
 ) {
-    // Fase 7.2: Bloqueo por conversación para permitir concurrencia entre clientes distintos
-    private val conversationLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
-    private val globalLock = Mutex()
+    // Bloqueos finos: por conversación y por SKU/producto (Fase F3 - Hallazgo A3)
+    private val conversationLocks = ConcurrentHashMap<String, Mutex>()
+    private val productLocks = ConcurrentHashMap<ProductKey, Mutex>()
 
     private fun lockFor(conversationId: String): Mutex =
         conversationLocks.computeIfAbsent(conversationId) { Mutex() }
 
-    /** Reservas activas por id. Solo se toca dentro de [globalLock]. */
-    private val reservations = mutableMapOf<String, Reservation>()
+    private fun lockForProduct(key: ProductKey): Mutex =
+        productLocks.computeIfAbsent(key) { Mutex() }
+
+    /** Reservas activas concurrentes por id. */
+    private val reservations = ConcurrentHashMap<String, Reservation>()
 
     suspend fun handle(
         channel: String,
@@ -87,7 +93,7 @@ class InboundMessagePipeline(
         messageId: String,
         text: String,
         now: Instant = Clock.System.now()
-    ): PipelineOutcome {
+    ): PipelineOutcome = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
         // Fuera del candado: cuando el LLM sea una llamada HTTP no debe bloquear a los demás clientes.
         val intent: ParsedCustomerIntent? =
@@ -95,23 +101,23 @@ class InboundMessagePipeline(
 
         val convId = "${channel.lowercase()}:$senderId"
         val outcome = lockFor(convId).withLock {
-            globalLock.withLock { decide(channel, senderId, messageId, trimmed, intent, now) }
+            decide(channel, senderId, messageId, trimmed, intent, now)
         }
 
-        val reply = outcome.reply ?: return outcome
+        val reply = outcome.reply ?: return@withContext outcome
         val sent = router.sendMessage(channel, senderId, reply)
         if (sent !is PortResult.Ok) {
             System.err.println("No se pudo responder en [$channel] a $senderId: $sent")
         }
-        return outcome.copy(sendResult = sent)
+        outcome.copy(sendResult = sent)
     }
 
     /** Libera las reservas vencidas. Se llama en cada mensaje y desde un temporizador. */
-    suspend fun sweep(now: Instant = Clock.System.now()) {
-        globalLock.withLock { sweepExpired(now) }
+    suspend fun sweep(now: Instant = Clock.System.now()): Unit = withContext(Dispatchers.IO) {
+        sweepExpired(now)
     }
 
-    suspend fun activeReservationCount(): Int = globalLock.withLock { reservations.size }
+    suspend fun activeReservationCount(): Int = reservations.size
 
     /**
      * Fase 1.5 — Hotfix del pago: el asesor confirma el pago desde el dashboard.
@@ -120,10 +126,10 @@ class InboundMessagePipeline(
      * el barrido de vencidas NO la libere. Devuelve true si se encontró y confirmó.
      */
     suspend fun confirmPayment(conversationId: String, now: Instant = Clock.System.now()): Boolean =
-        globalLock.withLock {
-            val conv = conversations.findById(conversationId) ?: return@withLock false
-            val reservationId = conv.currentReservationId ?: return@withLock false
-            val reservation = reservations[reservationId] ?: return@withLock false
+        withContext(Dispatchers.IO) {
+            val conv = conversations.findById(conversationId) ?: return@withContext false
+            val reservationId = conv.currentReservationId ?: return@withContext false
+            val reservation = reservations[reservationId] ?: return@withContext false
             // Extender la expiración 1 año: ningún barrido la tocará.
             val permanent = reservation.copy(expiresAt = now + 8_760.hours)  // 365 * 24 h
             reservations[reservationId] = permanent
@@ -133,11 +139,9 @@ class InboundMessagePipeline(
             true
         }
 
-
-
     // ------------------------------------------------------------------------------------------
 
-    private fun decide(
+    private suspend fun decide(
         channel: String,
         senderId: String,
         messageId: String,
@@ -181,8 +185,6 @@ class InboundMessagePipeline(
             CustomerIntentType.REQUEST_HUMAN_AGENT ->
                 return escalate(conv, now, "Claro, te comunico con un asesor. Te responderá por este mismo chat.", holdReservation = false)
             CustomerIntentType.SEND_PAYMENT_PROOF -> {
-                // Siempre escala (hay dinero de por medio, incluso si la reserva ya venció y el cliente pagó tarde),
-                // pero solo dice "recibimos tu comprobante" si realmente había un pago pendiente.
                 val awaitingPayment = conv.state == ConversationState.PAYMENT_PENDING || conv.state == ConversationState.RESERVED
                 val proofReply = if (awaitingPayment) {
                     "¡Gracias! Recibimos tu comprobante. Un asesor verificará el pago y te confirmará por este chat."
@@ -233,25 +235,18 @@ class InboundMessagePipeline(
         return when (intent.intentType) {
             CustomerIntentType.MAKE_OFFER -> handleOffer(conv, product, intent.offeredPrice, available, now)
             CustomerIntentType.ACCEPT_COUNTER_OFFER -> {
-                // Solo cuenta si realmente hay una contraoferta pendiente; si no, "ok" es una consulta cualquiera.
-                // El precio sale de la conversación (lo fijó el servidor), NUNCA del texto del cliente.
                 val pending = conv.pendingCounterCop
                 val counterAge = conv.pendingCounterAt?.let { now - it }
-                // Fase 3.4: la contraoferta vence a los 30 minutos (evita aceptar precios obsoletos).
                 val counterExpired = counterAge != null && counterAge > 30.minutes
                 when {
                     pending == null -> answer(conv, now, infoText(product, available), product, product.publishedPrice.amountInCop)
                     counterExpired -> {
-                        // La contraoferta venció: se limpia y se responde con precios actualizados.
                         val fresh = conv.copy(pendingCounterCop = null, pendingCounterAt = null)
                         answer(fresh, now,
                             "Lo sentimos, esa oferta ya expiró. El precio actual de ${product.itemName} es ${product.publishedPrice.formatFormattedCop()}. " +
                             "Si quieres proponer un nuevo valor, escríbeme la cifra.",
                             product, product.publishedPrice.amountInCop)
                     }
-                    // Fase 1.2 Fix: el cliente acepta la contraoferta pendiente → reservar DIRECTAMENTE al precio
-                    // acordado, sin volver a pasar por el NegotiationEngine (eso causaba rechazos incorrectos en
-                    // rondas 2+, escaladas a humano por counterOfferCount, o nuevas contraofertas en L3/L4).
                     else -> {
                         val agreedPrice = Money.of(pending)
                         if (!available) answer(conv, now, soldOutText(product), product)
@@ -267,7 +262,7 @@ class InboundMessagePipeline(
         }
     }
 
-    private fun handleOffer(
+    private suspend fun handleOffer(
         conv: Conversation,
         product: CommercialProduct,
         offered: Money?,
@@ -283,7 +278,6 @@ class InboundMessagePipeline(
                 product
             )
         }
-        // Una "cifra" enorme casi seguro NO es una oferta (teléfono, cédula, número de guía...): no se reserva por error.
         if (offered.amountInCop > product.publishedPrice.amountInCop * MAX_OFFER_FACTOR) {
             return answer(
                 conv, now,
@@ -292,7 +286,6 @@ class InboundMessagePipeline(
                 product
             )
         }
-        // El motor decide (revalida contra el PM vigente). Cada rechazo por debajo del piso baja un escalón la contraoferta.
         val decision = engine.evaluateOffer(product, offered, conv.counterOfferCount)
         if (!decision.accepted || decision.isEscalatedToHuman) {
             if (decision.isEscalatedToHuman) {
@@ -302,14 +295,14 @@ class InboundMessagePipeline(
                 state = ConversationState.NEGOTIATING,
                 counterOfferCount = (conv.counterOfferCount + 1).coerceAtMost(MAX_COUNTER_COUNT),
                 pendingCounterCop = decision.counterOffer?.amountInCop,
-                pendingCounterAt  = now   // Fase 3.4: registra cuándo se emitió la contraoferta
+                pendingCounterAt  = now
             )
             return answer(negotiating, now, decision.message, product, offered.amountInCop)
         }
         return reserveAndReply(conv, product, decision.agreedPrice ?: product.publishedPrice, decision.message, now)
     }
 
-    private fun reserveAndReply(
+    private suspend fun reserveAndReply(
         conv: Conversation,
         product: CommercialProduct,
         agreed: Money,
@@ -333,24 +326,26 @@ class InboundMessagePipeline(
         return answer(updated, now, text, product, agreed.amountInCop)
     }
 
-    private fun tryReserve(conv: Conversation, product: CommercialProduct, now: Instant): Reservation? {
+    private suspend fun tryReserve(conv: Conversation, product: CommercialProduct, now: Instant): Reservation? {
         if (!product.isActive) return null
-        val inv = catalog.inventory(product.key) ?: return null
-        if (!inv.isAvailable) return null
-        catalog.saveInventory(inv.addReservation(1))
-        val reservation = Reservation(
-            reservationId = "RES-${UUID.randomUUID()}",
-            conversationId = conv.conversationId,
-            productKey = product.key,
-            quantity = 1,
-            createdAt = now,
-            expiresAt = now + reservationTtl
-        )
-        reservations[reservation.reservationId] = reservation
-        return reservation
+        return lockForProduct(product.key).withLock {
+            val inv = catalog.inventory(product.key) ?: return@withLock null
+            if (!inv.isAvailable) return@withLock null
+            catalog.saveInventory(inv.addReservation(1))
+            val reservation = Reservation(
+                reservationId = "RES-${UUID.randomUUID()}",
+                conversationId = conv.conversationId,
+                productKey = product.key,
+                quantity = 1,
+                createdAt = now,
+                expiresAt = now + reservationTtl
+            )
+            reservations[reservation.reservationId] = reservation
+            reservation
+        }
     }
 
-    private fun releaseIfOtherProduct(conv: Conversation, newKey: ProductKey): Conversation {
+    private suspend fun releaseIfOtherProduct(conv: Conversation, newKey: ProductKey): Conversation {
         val id = conv.currentReservationId ?: return conv
         val r = reservations[id] ?: return conv.copy(currentReservationId = null, agreedPriceCop = null)
         if (r.productKey == newKey) return conv
@@ -359,9 +354,8 @@ class InboundMessagePipeline(
         return conv.copy(currentReservationId = null, agreedPriceCop = null, state = ConversationState.NEGOTIATING)
     }
 
-    private fun escalate(conv: Conversation, now: Instant, reply: String, holdReservation: Boolean): PipelineOutcome {
+    private suspend fun escalate(conv: Conversation, now: Instant, reply: String, holdReservation: Boolean): PipelineOutcome {
         if (holdReservation) {
-            // Un pago en verificación no puede perder su reserva a los 15 minutos.
             val r = conv.currentReservationId?.let { reservations[it] }
             if (r != null && r.status == Reservation.ReservationStatus.ACTIVE) {
                 reservations[r.reservationId] = r.copy(expiresAt = now + proofHold)
@@ -370,7 +364,7 @@ class InboundMessagePipeline(
         return answer(conv.copy(state = ConversationState.ESCALATED_HUMAN), now, reply, productOf(conv))
     }
 
-    private fun sweepExpired(now: Instant) {
+    private suspend fun sweepExpired(now: Instant) {
         val expired = reservations.values.filter { it.status == Reservation.ReservationStatus.ACTIVE && now >= it.expiresAt }
         for (r in expired) {
             releaseStock(r)
@@ -384,10 +378,15 @@ class InboundMessagePipeline(
                 conversations.save(c.copy(state = newState, currentReservationId = null, agreedPriceCop = null, lastUpdated = now))
             }
         }
+        // Limpiar candados inactivos (evita crecimiento en memoria)
+        conversationLocks.entries.removeIf { !it.value.isLocked }
+        productLocks.entries.removeIf { !it.value.isLocked }
     }
 
-    private fun releaseStock(r: Reservation) {
-        catalog.inventory(r.productKey)?.let { catalog.saveInventory(it.releaseReservation(r.quantity)) }
+    private suspend fun releaseStock(r: Reservation) {
+        lockForProduct(r.productKey).withLock {
+            catalog.inventory(r.productKey)?.let { catalog.saveInventory(it.releaseReservation(r.quantity)) }
+        }
     }
 
     // ---- respuestas ----------------------------------------------------------------------------

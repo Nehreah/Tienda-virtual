@@ -17,6 +17,8 @@ dependencies {
     implementation("com.zaxxer:HikariCP:5.1.0")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
     implementation("org.jetbrains.kotlinx:kotlinx-datetime:0.5.0")
+    implementation("org.flywaydb:flyway-core:10.7.1")
+    implementation("org.flywaydb:flyway-database-postgresql:10.7.1")
     val ktorVersion = "2.3.8"
     implementation("io.ktor:ktor-client-core:$ktorVersion")
     implementation("io.ktor:ktor-client-cio:$ktorVersion")

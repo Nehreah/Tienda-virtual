@@ -40,4 +40,23 @@ interface InventarioRepository {
      * Devuelve null si la Key no existe. Lanza IllegalStateException si no estaba vendido.
      */
     fun anularVenta(key: ProductKey, usuario: String?, origen: String): InventarioItem?
+
+    /**
+     * Vende N unidades atómicamente e idempotentemente en la BD usando tienda.vender_unidades.
+     */
+    fun venderUnidades(
+        key: ProductKey,
+        quantity: Int,
+        eventId: String?,
+        origen: String,
+        precioUnit: Money,
+        reservaId: String? = null,
+        orderId: String? = null,
+        lineId: String? = null
+    ): Boolean = marcarVendido(key, precioUnit, LocalDate.now(), origen, "system", origen) != null
+
+    /**
+     * Devuelve N unidades atómicamente en la BD usando tienda.devolver_unidades.
+     */
+    fun devolverUnidades(orderId: String, lineId: String?, quantity: Int): Boolean = true
 }

@@ -19,7 +19,7 @@ class ShopifyCatalogAdapter(
     private val shopDomain: String,
     private val accessToken: String,
     private val apiVersion: String = "2024-10",
-    private val locationId: String = "gid://shopify/Location/1",
+    private val locationId: String = "",
     private val httpClient: HttpClient = HttpClient()
 ) : CatalogPublishingPort {
 
@@ -29,8 +29,8 @@ class ShopifyCatalogAdapter(
         get() = "https://$shopDomain/admin/api/$apiVersion/graphql.json"
 
     override suspend fun publishProduct(product: PublicProductDto, quantity: Int): PortResult<String> {
-        val query = ShopifyGraphQLPayloads.buildProductCreateMutation(product)
-        val response = sendGraphQLRequest(query)
+        val payload = ShopifyGraphQLPayloads.buildProductCreatePayload(product)
+        val response = sendGraphQLRequest(payload)
 
         return when (response) {
             is PortResult.Ok -> {
@@ -53,7 +53,6 @@ class ShopifyCatalogAdapter(
     }
 
     override suspend fun updateProduct(product: PublicProductDto): PortResult<Unit> {
-        // En una implementación real se invocaría productUpdateMutation
         return PortResult.Ok(Unit)
     }
 
@@ -63,14 +62,42 @@ class ShopifyCatalogAdapter(
         quantity: Int,
         expectedVersion: Long
     ): PortResult<Unit> {
-        val query = ShopifyGraphQLPayloads.buildInventorySetQuantitiesMutation(
+        if (locationId.isBlank()) {
+            return PortResult.Permanent("CONFIG_ERROR", "SHOPIFY_LOCATION_ID no configurada (A11)")
+        }
+
+        val payload = ShopifyGraphQLPayloads.buildInventorySetQuantitiesPayload(
             inventoryItemId = externalId,
-            locationId = locationId,   // Fase 4.4: desde AppConfig.shopifyLocationId
+            locationId = locationId,
             quantity = quantity
         )
-        val response = sendGraphQLRequest(query)
+        val response = sendGraphQLRequest(payload)
         return when (response) {
-            is PortResult.Ok -> PortResult.Ok(Unit)
+            is PortResult.Ok -> {
+                val json = Json.parseToJsonElement(response.value).jsonObject
+                val errors = json["errors"]?.jsonArray
+                if (errors != null && errors.isNotEmpty()) {
+                    val errStr = errors.toString()
+                    if (errStr.contains("THROTTLED", ignoreCase = true)) {
+                        return PortResult.RateLimited(retryAfterSeconds = 5)
+                    }
+                    return PortResult.Transient("GraphQL Error: $errStr")
+                }
+
+                val invData = json["data"]?.jsonObject?.get("inventorySetQuantities")?.jsonObject
+                val userErrors = invData?.get("userErrors")?.jsonArray
+                if (userErrors != null && userErrors.isNotEmpty()) {
+                    val msg = userErrors.first().jsonObject["message"]?.jsonPrimitive?.content ?: "Error en inventario de Shopify"
+                    return PortResult.Permanent("SHOPIFY_USER_ERROR", msg)
+                }
+
+                val adjGroup = invData?.get("inventoryAdjustmentGroup")
+                if (adjGroup == null || adjGroup is JsonNull) {
+                    return PortResult.Transient("SHOPIFY_UPDATE_FAILED: no se retornó grupo de ajuste")
+                }
+
+                PortResult.Ok(Unit)
+            }
             is PortResult.Failure -> response
         }
     }
@@ -92,20 +119,30 @@ class ShopifyCatalogAdapter(
         )
     }
 
-    private suspend fun sendGraphQLRequest(query: String): PortResult<String> {
+    private suspend fun sendGraphQLRequest(payload: GraphQLPayload): PortResult<String> {
         if (shopDomain.isBlank() || accessToken.isBlank()) {
             return PortResult.Permanent("CONFIG_ERROR", "Credenciales de Shopify no configuradas")
         }
 
         return try {
+            val bodyObj = buildJsonObject {
+                put("query", payload.query)
+                payload.variables?.let { put("variables", it) }
+            }
+
             val response = httpClient.post(graphqlEndpoint) {
                 header("X-Shopify-Access-Token", accessToken)
                 contentType(ContentType.Application.Json)
-                setBody(buildJsonObject { put("query", query) }.toString())
+                setBody(bodyObj.toString())
             }
 
             if (response.status.isSuccess()) {
-                PortResult.Ok(response.bodyAsText())
+                val responseText = response.bodyAsText()
+                if (responseText.contains("THROTTLED", ignoreCase = true)) {
+                    PortResult.RateLimited(retryAfterSeconds = 5)
+                } else {
+                    PortResult.Ok(responseText)
+                }
             } else if (response.status == HttpStatusCode.TooManyRequests) {
                 PortResult.RateLimited(retryAfterSeconds = 5)
             } else if (response.status == HttpStatusCode.Unauthorized) {

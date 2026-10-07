@@ -28,5 +28,6 @@ data class ChatDealLog(
     val offeredPrice: String,
     val dealState: DealState,
     val dealStateLabel: String,
-    val timestamp: String
+    val timestamp: String,
+    val productKey: String = ""
 )

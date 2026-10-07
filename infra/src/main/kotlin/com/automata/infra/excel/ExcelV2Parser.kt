@@ -310,22 +310,30 @@ class ExcelV2Parser {
                 if (DateUtil.isCellDateFormatted(cell)) cell.dateCellValue.toString()
                 else {
                     val d = cell.numericCellValue
-                    if (d == d.toLong().toDouble()) d.toLong().toString() else d.toString()
+                    if (d == d.toLong().toDouble()) {
+                        d.toLong().toString()
+                    } else {
+                        java.math.BigDecimal.valueOf(d).toPlainString()
+                    }
                 }
             }
             CellType.BOOLEAN -> cell.booleanCellValue.toString()
             CellType.FORMULA -> {
-                try { cell.stringCellValue } catch (e: Exception) { cell.numericCellValue.toString() }
+                try {
+                    cell.stringCellValue
+                } catch (e: Exception) {
+                    try {
+                        val d = cell.numericCellValue
+                        if (d == d.toLong().toDouble()) d.toLong().toString() else java.math.BigDecimal.valueOf(d).toPlainString()
+                    } catch (ex: Exception) {
+                        ""
+                    }
+                }
             }
             else -> ""
         }.trim()
 
-        // Prevenir ataques de inyección de fórmulas de Excel (= + - @)
-        return if (text.startsWith("=") || text.startsWith("+") || text.startsWith("-") || text.startsWith("@")) {
-            "'$text"
-        } else {
-            text
-        }
+        return text
     }
 
     private companion object {

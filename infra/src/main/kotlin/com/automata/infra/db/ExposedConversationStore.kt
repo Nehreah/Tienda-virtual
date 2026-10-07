@@ -2,8 +2,11 @@ package com.automata.infra.db
 
 import com.automata.messaging.model.Conversation
 import com.automata.messaging.model.ConversationState
+import com.automata.messaging.model.Message
 import com.automata.messaging.ports.ConversationStore
 import com.automata.shared.ProductKey
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
@@ -28,6 +31,12 @@ class ExposedConversationStore : ConversationStore {
     }
 
     override fun save(conversation: Conversation): Unit = transaction {
+        val mensajesJson = try {
+            Json.encodeToString(ListSerializer(Message.serializer()), conversation.messages)
+        } catch (e: Exception) {
+            "[]"
+        }
+
         val count = ConversacionesTable.update({ ConversacionesTable.conversationId eq conversation.conversationId }) { row ->
             row[ConversacionesTable.customerId] = conversation.customerPhoneOrId
             row[ConversacionesTable.channel] = conversation.channel
@@ -37,6 +46,8 @@ class ExposedConversationStore : ConversationStore {
             row[ConversacionesTable.counterOfferCount] = conversation.counterOfferCount
             row[ConversacionesTable.pendingCounterCop] = conversation.pendingCounterCop
             row[ConversacionesTable.pendingCounterAt] = conversation.pendingCounterAt?.let { Instant.ofEpochMilli(it.toEpochMilliseconds()) }
+            row[ConversacionesTable.currentReservationId] = conversation.currentReservationId
+            row[ConversacionesTable.mensajes] = mensajesJson
             row[ConversacionesTable.lastUpdated] = Instant.ofEpochMilli(conversation.lastUpdated.toEpochMilliseconds())
         }
         if (count == 0) {
@@ -50,6 +61,8 @@ class ExposedConversationStore : ConversationStore {
                 row[ConversacionesTable.counterOfferCount] = conversation.counterOfferCount
                 row[ConversacionesTable.pendingCounterCop] = conversation.pendingCounterCop
                 row[ConversacionesTable.pendingCounterAt] = conversation.pendingCounterAt?.let { Instant.ofEpochMilli(it.toEpochMilliseconds()) }
+                row[ConversacionesTable.currentReservationId] = conversation.currentReservationId
+                row[ConversacionesTable.mensajes] = mensajesJson
                 row[ConversacionesTable.lastUpdated] = Instant.ofEpochMilli(conversation.lastUpdated.toEpochMilliseconds())
             }
         }
@@ -70,18 +83,30 @@ class ExposedConversationStore : ConversationStore {
         val pendingAtJava = this[ConversacionesTable.pendingCounterAt]
         val lastUpdatedJava = this[ConversacionesTable.lastUpdated]
 
+        val rawMensajes = this[ConversacionesTable.mensajes]
+        val messagesList = if (!rawMensajes.isNullOrBlank()) {
+            try {
+                Json.decodeFromString(ListSerializer(Message.serializer()), rawMensajes)
+            } catch (e: Exception) {
+                emptyList()
+            }
+        } else emptyList()
+
         return Conversation(
             conversationId = this[ConversacionesTable.conversationId],
             customerPhoneOrId = this[ConversacionesTable.customerId],
             channel = this[ConversacionesTable.channel],
             activeProductKey = this[ConversacionesTable.activeProductKey]?.let { ProductKey(it) },
             state = convState,
+            messages = messagesList,
+            currentReservationId = this[ConversacionesTable.currentReservationId],
             agreedPriceCop = this[ConversacionesTable.agreedPriceCop],
             counterOfferCount = this[ConversacionesTable.counterOfferCount],
             pendingCounterCop = this[ConversacionesTable.pendingCounterCop],
             pendingCounterAt = pendingAtJava?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it.toEpochMilli()) },
-            lastUpdated = lastUpdatedJava?.let { kotlinx.datetime.Instant.fromEpochMilliseconds(it.toEpochMilli()) }
-                ?: kotlinx.datetime.Clock.System.now()
+            lastUpdated = kotlinx.datetime.Instant.fromEpochMilliseconds(lastUpdatedJava.toEpochMilli())
         )
     }
 }
+
+

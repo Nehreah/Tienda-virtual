@@ -72,6 +72,8 @@ object AppConfig {
 
     /** Valor tal cual está en el entorno o en local.properties ("" si no existe). La variable de entorno gana. */
     private fun rawValue(key: String): String {
+        val sysProp = System.getProperty(key)
+        if (!sysProp.isNullOrBlank()) return sysProp
         val envVal = System.getenv(key)
         if (!envVal.isNullOrBlank()) return envVal
         val propVal = localProps.getProperty(key)
@@ -113,8 +115,10 @@ object AppConfig {
     val shopifyShopDomain: String get() = get("SHOPIFY_SHOP_DOMAIN")
     val shopifyAccessToken: String get() = get("SHOPIFY_ACCESS_TOKEN")
     val shopifyWebhookSecret: String get() = get("SHOPIFY_WEBHOOK_SECRET")
-    /** Fase 4.4: ID de la ubicación de inventario en Shopify (se obtiene de la Admin API). */
-    val shopifyLocationId: String get() = get("SHOPIFY_LOCATION_ID", "gid://shopify/Location/1")
+    /** ID de la ubicación de inventario en Shopify (debe configurarse vía SHOPIFY_LOCATION_ID). */
+    val shopifyLocationId: String get() = get("SHOPIFY_LOCATION_ID")
+    /** Versión de Shopify API (configurable vía SHOPIFY_API_VERSION). */
+    val shopifyApiVersion: String get() = get("SHOPIFY_API_VERSION", "2024-10")
 
     // Meta Catalog & Shop Config
     val metaCatalogId: String get() = get("META_CATALOG_ID")
@@ -150,10 +154,10 @@ object AppConfig {
     // Vacío = CORS NO se instala (solo mismo origen). El tablero no necesita CORS.
     val corsAllowedHost: String get() = get("CORS_ALLOWED_HOST")
 
-    // TRUST_PROXY=true: la app corre detrás de UN proxy inverso de confianza (nginx, Caddy...). Entonces la IP del cliente
-    // (límite de intentos) y el host (defensa CSRF) se leen de X-Forwarded-For / X-Forwarded-Host. Dejar en false si no hay proxy:
-    // con true y sin proxy, cualquiera podría falsear esas cabeceras.
+    // TRUST_PROXY=true: la app corre detrás de un proxy inverso de confianza.
     val trustProxyHeaders: Boolean get() = get("TRUST_PROXY", "false").trim().equals("true", ignoreCase = true)
+    /** D11: Número de hops de proxy para extraer la IP real desde X-Forwarded-For. */
+    val trustProxyHops: Int get() = get("TRUST_PROXY_HOPS", "1").toIntOrNull() ?: 1
 
     // Google Gemini LLM API Key
     val geminiApiKey: String get() = get("GEMINI_API_KEY", "")

@@ -82,6 +82,28 @@ class NegotiationEngine(
             )
         }
 
+        // Si PM >= PP no es posible otorgar descuentos (Hallazgo A13)
+        if (pm >= pp) {
+            if (offeredAmount >= pp) {
+                return NegotiationDecision(
+                    accepted     = true,
+                    level        = NegotiationLevel.L0_PUBLISHED_PRICE,
+                    agreedPrice  = pp,
+                    counterOffer = null,
+                    message = "¡Excelente! Aceptamos tu oferta de ${pp.formatFormattedCop()}. Podemos proceder con el pago."
+                )
+            } else {
+                return NegotiationDecision(
+                    accepted     = false,
+                    level        = NegotiationLevel.REJECTED_BELOW_PM,
+                    agreedPrice  = null,
+                    counterOffer = pp,
+                    message      = "El precio de este producto es de ${pp.formatFormattedCop()} y no tiene margen de descuento.",
+                    isFinalCounter = true
+                )
+            }
+        }
+
         // Por debajo del PM: contraoferta escalonada sin revelar el piso.
         if (offeredAmount < pm) {
             return counterOffer(pp, pm, previousCounterOffers)
@@ -170,12 +192,14 @@ class NegotiationEngine(
      * El resultado siempre está en [pm+1, pp] (no revela el PM exacto).
      */
     private fun addRandomVariation(raw: Money, pm: Money, pp: Money): Money {
+        if (pm >= pp) return pp
         val spread = raw.amountInCop - pm.amountInCop
         val jitter = if (spread > 0) (random.nextDouble() * 0.10 - 0.05) * spread else 0.0
         val adjusted = raw.amountInCop + jitter.toLong()
         // Redondeo HACIA ARRIBA a miles: nunca revela la cifra exacta del PM.
         val rounded = ((adjusted + 999) / 1000) * 1000
-        return Money.of(maxOf(pm.amountInCop + 1, minOf(rounded, pp.amountInCop)))
+        val clamped = maxOf(pm.amountInCop + 1, minOf(rounded, pp.amountInCop))
+        return Money.of(minOf(clamped, pp.amountInCop))
     }
 
     private fun calculateLevelPrice(pp: Money, pm: Money, factor: Double): Money {
