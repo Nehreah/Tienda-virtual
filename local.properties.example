@@ -23,10 +23,11 @@ SHOPIFY_WEBHOOK_SECRET=shpss_xxxxxxxxxxxxxxxxxxxxxxx
 # Ejemplo: gid://shopify/Location/12345678901
 SHOPIFY_LOCATION_ID=gid://shopify/Location/1
 
-# Meta Commerce Catalog API
+# Meta Commerce Catalog API & Webhooks (WhatsApp / Instagram DM / Facebook Messenger)
 META_CATALOG_ID=meta_cat_123456
 META_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx
 META_COUNTRY_CODE=CO
+# Verify Token elegido para validar el webhook en Meta for Developers:
 META_WEBHOOK_VERIFY_TOKEN=verify_token_secret_123
 # Versión de la Graph API (WhatsApp, Instagram, Messenger). Cámbiala aquí cuando Meta retire la actual.
 META_GRAPH_API_VERSION=v26.0
@@ -34,6 +35,12 @@ META_GRAPH_API_VERSION=v26.0
 # Si lo dejas vacío, POST /webhooks/meta responde 503 y no procesa nada (ya no existe el modo "sin firma").
 # META_WEBHOOK_VERIFY_TOKEN también debe tener valor; genera uno con: openssl rand -base64 24
 META_APP_SECRET=
+
+# AYUDA PARA CONFIGURAR EL WEBHOOK EN META FOR DEVELOPERS:
+# Callback URL (URL de retorno):
+# - En Producción (Servidor Oracle/Cloud): https://tu-dominio.com/webhooks/meta (o tu IP pública con SSL)
+# - En Desarrollo Local: https://xxxx.ngrok-free.app/webhooks/meta (ejecutando 'ngrok http 8080')
+# El tablero web (/ #/apis) calcula automáticamente esta URL lista para copiar.
 
 # WhatsApp Business Cloud API
 WHATSAPP_PHONE_NUMBER_ID=1001234567890

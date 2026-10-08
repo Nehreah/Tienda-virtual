@@ -1074,6 +1074,53 @@ object DashboardRenderer {
                 <div class="api-grid">
                     $apiCardsHtml
                 </div>
+                <div class="card card-pad stack" style="margin-top:20px;">
+                    <div class="form-row" style="justify-content:space-between;align-items:flex-start">
+                        <div>
+                            <h3>Configuración de Webhook de Meta (WhatsApp / Instagram / Messenger)</h3>
+                            <p>Copia estos datos en el panel de Meta for Developers → Webhooks / WhatsApp.</p>
+                        </div>
+                        <span class="badge info sm">URL Autodetectada</span>
+                    </div>
+                    <div class="cols-2">
+                        <div class="stack" style="gap:8px;">
+                            <label style="font-size:12.5px;font-weight:600;color:var(--muted)">Callback URL (URL de retorno):</label>
+                            <div class="form-row">
+                                <input type="text" id="meta-callback-url-input" class="input" readonly style="font-family:var(--mono);font-size:12.5px;">
+                                <button type="button" class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('meta-callback-url-input').value);alert('Callback URL copiada al portapapeles');">Copiar URL</button>
+                            </div>
+                            <p style="font-size:12px;color:var(--muted)">Calculada dinámicamente según el host actual (local, ngrok o servidor de producción).</p>
+                        </div>
+                        <div class="stack" style="gap:8px;">
+                            <label style="font-size:12.5px;font-weight:600;color:var(--muted)">Ruta del Endpoint:</label>
+                            <input type="text" value="/webhooks/meta" class="input" readonly style="font-family:var(--mono);font-size:12.5px;">
+                            <p style="font-size:12px;color:var(--muted)">Verify Token: configurado en META_WEBHOOK_VERIFY_TOKEN de tu local.properties.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card card-pad stack" style="margin-top:20px;">
+                    <div class="form-row" style="justify-content:space-between;align-items:flex-start">
+                        <div>
+                            <h3>Diagnóstico Operacional y Auditoría de Sincronización</h3>
+                            <p>Monitorea la coherencia entre el catálogo local y las plataformas conectadas.</p>
+                        </div>
+                        <span class="badge purple sm">Auditoría en Vivo</span>
+                    </div>
+                    <div class="cols-2">
+                        <div class="stack" style="gap:8px;">
+                            <label style="font-size:12.5px;font-weight:600;color:var(--muted)">Deriva de Stock en Canales:</label>
+                            <button type="button" class="btn btn-sm btn-primary" hx-get="/api/deriva/reporte" hx-target="#diag-results">Auditar Deriva de Stock</button>
+                        </div>
+                        <div class="stack" style="gap:8px;">
+                            <label style="font-size:12.5px;font-weight:600;color:var(--muted)">Eventos de Webhooks No Resueltos:</label>
+                            <button type="button" class="btn btn-sm btn-ok" hx-get="/api/eventos-sin-resolver" hx-target="#diag-results">Ver Eventos Pendientes</button>
+                        </div>
+                    </div>
+                    <div id="diag-results" class="console" style="margin-top:10px;" aria-live="polite">
+                        <span class="muted">Haz clic en un botón superior para auditar discrepancias de inventario o webhooks retenidos...</span>
+                    </div>
+                </div>
             </section>
 
             <!-- ==================== SUBPÁGINA: MENSAJERÍA ==================== -->
@@ -1127,8 +1174,13 @@ object DashboardRenderer {
                         <h2>Catálogo y estado operacional multicanal</h2>
                         <p>Stock maestro frente a stock vivo, y publicación en cada canal.</p>
                     </div>
-                    <span class="badge neutral">$totalProducts ítems</span>
+                    <div class="chips">
+                        <span class="badge neutral">$totalProducts ítems</span>
+                        <a href="/api/excel/export" class="btn btn-sm btn-primary" title="Descargar inventario completo en formato Excel .xlsx">⬇ Exportar Excel</a>
+                        <button type="button" class="btn btn-sm btn-ok" hx-post="/api/reconciliacion/ejecutar" hx-target="#reconcile-results" title="Comparar catálogo local contra Shopify y Meta Catalog">🔄 Reconciliar Canales</button>
+                    </div>
                 </div>
+                <div id="reconcile-results" aria-live="polite"></div>
                 <div class="card">
                     <div class="table-wrap">
                         <table style="min-width:1080px">
@@ -1314,6 +1366,10 @@ object DashboardRenderer {
         }
         window.addEventListener('hashchange', showView);
         showView();
+
+        /* ---------- Autodetección Callback URL de Meta ---------- */
+        var cbInput = document.getElementById('meta-callback-url-input');
+        if (cbInput) { cbInput.value = window.location.origin + '/webhooks/meta'; }
 
         /* ---------- Menú móvil ---------- */
         document.getElementById('menu-btn').addEventListener('click', function () {
