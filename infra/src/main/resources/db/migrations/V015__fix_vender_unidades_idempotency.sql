@@ -49,14 +49,15 @@ BEGIN
         END IF;
     END IF;
 
-    -- 3. Actualizar Inventario Atómicamente usando el índice de la clave primaria (sin UPPER(key))
+    -- 3. Actualizar Inventario Atómicamente (manteniendo cantidad y cantidad_total sincronizadas)
     UPDATE tienda.inventario
-       SET cantidad_total = cantidad_total - p_qty,
+       SET cantidad = GREATEST(0, cantidad - p_qty),
+           cantidad_total = GREATEST(0, cantidad_total - p_qty),
            cantidad_reservada = GREATEST(0, cantidad_reservada - v_reserva_qty),
            version = version + 1
      WHERE key = p_key
-       AND (cantidad_total - cantidad_reservada + v_reserva_qty) >= p_qty
-    RETURNING cantidad_total, cantidad_reservada, version
+       AND (GREATEST(cantidad, cantidad_total) - cantidad_reservada + v_reserva_qty) >= p_qty
+    RETURNING cantidad, cantidad_reservada, version
          INTO v_updated_total, v_updated_reserv, v_updated_version;
 
     -- Si no se afectó ninguna fila, revertir el evento procesado y retornar SIN_STOCK

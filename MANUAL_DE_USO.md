@@ -13,6 +13,9 @@ La plataforma opera bajo el principio de **desacoplamiento de información**:
 
 > [!IMPORTANT]
 > **Seguridad Financiera Protegida**: Los datos de **Precio Mínimo (`PM`)**, **Costo interno**, **Ganancia** y **Porcentaje de Margen** son estrictamente privados. El sistema los utiliza internamente para validar ofertas y comisiones, pero **NUNCA los transmite a Shopify, Meta, Mercado Libre ni a los clientes**.
+>
+> > [!NOTE]
+> > **Regla de Columnas Formuladas/Calculadas**: Las celdas con datos calculados o formulados a partir de otras variables (como el **Precio Mínimo `PM` = `costo_total × (1 + roi_minimo_pct)`**, **Costo Total**, **Margen %** o **Ganancia**) **ignoran por diseño cualquier valor digitado manualmente en el Excel**. El sistema recomputa deterministamente su propia fórmula interna de dominio (`FinancialMath`) al importar, asegurando que la memoria, el parser y la base de datos coincidan al 100% en todo momento.
 
 ---
 

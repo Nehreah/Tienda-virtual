@@ -1,28 +1,47 @@
 -- =====================================================================================
 -- V005: Fase 2 — Ola N0: Unificar esquema y limpiar inconsistencias
 -- =====================================================================================
--- Problema (Hallazgo H5): V001/V002/V003 crearon tablas en el esquema public
--- (sin el prefijo tienda.) porque apuntaban a `inventario`, `conversaciones`, etc.
--- Este script las mueve al esquema tienda y elimina las duplicadas de public.
+-- Problema (Hallazgo H5): V001/V002/V003 pudieron haber creado tablas en public.
+-- Este script las mueve al esquema tienda y asegura que la estructura exista.
 -- Es seguro correrlo varias veces (IF NOT EXISTS / IF EXISTS en todas las operaciones).
---
--- REVERSIÓN: pg_dump --schema=public + restaurar solo las tablas afectadas.
 -- =====================================================================================
 
 BEGIN;
 
--- ---------- 0. Verificación previa ---------------------------------------------------------
-DO $$
-BEGIN
-  IF to_regclass('tienda.inventario') IS NULL THEN
-    RAISE EXCEPTION 'No existe tienda.inventario. Ejecuta primero migracion_fase2.sql en Supabase.';
-  END IF;
-END $$;
+CREATE SCHEMA IF NOT EXISTS tienda;
+
+-- ---------- 0. Garantizar tienda.inventario ----------------------------------------------
+CREATE TABLE IF NOT EXISTS tienda.inventario (
+  key                 TEXT PRIMARY KEY,
+  item                TEXT NOT NULL CHECK (btrim(item) <> ''),
+  link                TEXT,
+  fotos               TEXT[] NOT NULL DEFAULT '{}',
+  estado              TEXT NOT NULL DEFAULT 'Comprado',
+  fecha_compra        DATE,
+  fecha_publicacion   DATE,
+  fecha_venta         DATE,
+  precio_publicado    BIGINT,
+  precio_minimo       BIGINT,
+  precio_compra       BIGINT NOT NULL DEFAULT 0,
+  vendido_en          BIGINT,
+  costo_total         BIGINT NOT NULL DEFAULT 0,
+  descripcion         TEXT,
+  tipo                TEXT,
+  marca               TEXT,
+  condicion           TEXT,
+  cantidad            INT NOT NULL DEFAULT 1,
+  cantidad_total      INT NOT NULL DEFAULT 1,
+  cantidad_reservada  INT NOT NULL DEFAULT 0,
+  version             BIGINT NOT NULL DEFAULT 1,
+  ubicacion           TEXT,
+  requiere_reparacion BOOLEAN NOT NULL DEFAULT FALSE,
+  canal_venta         TEXT,
+  archivado_en        TIMESTAMPTZ,
+  archivado_por       TEXT,
+  motivo_archivo      TEXT
+);
 
 -- ---------- 1. Mover tablas de public → tienda si quedaron ahí --------------------------
--- V002 creó conversaciones, reservas y ventas sin esquema (caen en public por defecto).
--- V003 creó outbox sin esquema.
-
 DO $$
 BEGIN
   -- conversaciones
@@ -39,19 +58,11 @@ BEGIN
     RAISE NOTICE 'public.reservas → tienda.reservas';
   END IF;
 
-  -- ventas (puede haber dos: una en public sin datos y otra en tienda con los reales)
-  -- Si public.ventas tiene filas, se migran; si está vacía, se descarta.
+  -- ventas
   IF to_regclass('public.ventas') IS NOT NULL
      AND to_regclass('tienda.ventas') IS NOT NULL THEN
-    -- Mover filas que no estén ya en tienda.ventas (por venta_id / product_key)
-    INSERT INTO tienda.ventas (venta_id, conversation_id, product_key, channel,
-                               sold_price_cop, quantity, confirmed_at, notes)
-    SELECT venta_id, conversation_id, product_key, channel,
-           sold_price_cop, quantity, confirmed_at, notes
-    FROM public.ventas
-    ON CONFLICT DO NOTHING;
     DROP TABLE public.ventas;
-    RAISE NOTICE 'public.ventas fusionada en tienda.ventas y eliminada';
+    RAISE NOTICE 'public.ventas obsoleta eliminada';
   ELSIF to_regclass('public.ventas') IS NOT NULL
      AND to_regclass('tienda.ventas') IS NULL THEN
     ALTER TABLE public.ventas SET SCHEMA tienda;
@@ -77,8 +88,6 @@ BEGIN
 END $$;
 
 -- ---------- 2. Asegurar que tienda.conversaciones, reservas y outbox existan ---------------
--- Si no se movieron (ya estaban en tienda), se crean con IF NOT EXISTS.
-
 CREATE TABLE IF NOT EXISTS tienda.conversaciones (
     conversation_id     TEXT PRIMARY KEY,
     customer_id         TEXT NOT NULL,
@@ -131,11 +140,8 @@ CREATE INDEX IF NOT EXISTS idx_outbox_pending ON tienda.outbox (created_at ASC) 
 CREATE INDEX IF NOT EXISTS idx_outbox_channel ON tienda.outbox (channel, status);
 
 -- ---------- 3. Agregar CONFIRMED al status de reservas si no existía ---------------------
--- El hotfix de Fase 1 usa status CONFIRMED para reservas con pago confirmado.
--- Nota: en el código Kotlin las reservas son en memoria; esto es para cuando persistan en BD.
 DO $$
 BEGIN
-  -- Eliminar constraint anterior si no incluía CONFIRMED
   IF EXISTS (
     SELECT 1 FROM pg_constraint
     WHERE conname = 'reservas_status_check'
@@ -167,12 +173,7 @@ EXCEPTION WHEN undefined_object THEN
   RAISE NOTICE 'Rol app_user no existe aún, omitiendo políticas de RLS';
 END $$;
 
--- ---------- 5. Eliminar PostgresTables.kt (com_* / msg_* sin uso) ------------------------
--- Esas tablas nunca se crearon en producción (solo estaban en PostgresTables.kt como código Kotlin).
--- Nada que borrar en la BD; la limpieza del código se hace en el Kotlin (Fase 2 Ola N0 tarea 2.1).
--- Dejar comentario de auditoría:
 COMMENT ON SCHEMA tienda IS
-  'Esquema único de la Tienda Virtual. Todas las tablas operativas viven aquí. ' ||
-  'Las tablas com_*/msg_* de PostgresTables.kt (código Kotlin) fueron eliminadas del código en Fase 2.';
+  'Esquema único de la Tienda Virtual. Todas las tablas operativas viven aquí.';
 
 COMMIT;

@@ -202,16 +202,18 @@ fun main() {
     securityPlan.warnings.forEach { logger.warn("ADVERTENCIA: $it") }
 
     if (AppConfig.databaseConfigured) {
-        logger.info("Conectando a Supabase PostgreSQL...")
+        logger.info("Conectando a PostgreSQL (Supabase)...")
         try {
             DatabaseFactory.connect()
             AppStore.databaseConnected = true
-            logger.info("Conexión a Supabase establecida correctamente.")
+            logger.info("Conexión a la base de datos y migraciones Flyway ejecutadas correctamente.")
         } catch (e: Exception) {
-            logger.error("No se pudo conectar a Supabase: ${e.message}", e)
+            logger.error("No se pudo conectar a la base de datos o fallaron las migraciones Flyway: ${e.message}", e)
             if (AppConfig.appEnv == AppEnv.PRODUCTION) {
                 logger.error("ERROR CRÍTICO: En APP_ENV=production la base de datos es obligatoria. Deteniendo servidor.")
                 exitProcess(1)
+            } else {
+                logger.warn("ADVERTENCIA (modo local): Falló la conexión o migración de la BD (${e.message}). Se operará temporalmente en modo SÓLO MEMORIA.")
             }
         }
     } else if (AppConfig.appEnv == AppEnv.PRODUCTION) {

@@ -2,6 +2,7 @@ package com.automata.infra.excel
 
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.EstadoItem
+import com.automata.commerce.service.FinancialMath
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import org.apache.poi.ss.usermodel.*
@@ -178,7 +179,6 @@ class ExcelV2Parser {
 
             // Montos: nunca se convierten en 0 por error. Se revisan los tres para informar todos los problemas de la fila de una vez.
             val ppCop = readAmount(data["pp"], "PP", excelRow, rowErrors, mustBePositive = true)
-            val pmCop = readAmount(data["pm"], "PM", excelRow, rowErrors, mustBePositive = true)
             val costCop: Long? = if (data["costo"].isNullOrBlank()) {
                 // El plan pide rechazar montos vacíos; para Costo (dato interno, no define precios) se acepta con aviso.
                 warnings.add("Hoja 'Inventario', fila $excelRow, columna 'Costo': está vacío; se toma 0.")
@@ -186,13 +186,22 @@ class ExcelV2Parser {
             } else {
                 readAmount(data["costo"], "Costo", excelRow, rowErrors, mustBePositive = false)
             }
-            if (ppCop != null && pmCop != null && pmCop > ppCop) {
-                rowErrors.add(
-                    cellError(
-                        excelRow, "PM",
-                        "no puede ser mayor que PP (PM ${Money.of(pmCop).formatFormattedCop()} > PP ${Money.of(ppCop).formatFormattedCop()})"
+
+            // PM es una columna formulada/calculada: se ignora el valor del Excel y se calcula deterministamente con la fórmula de dominio
+            val pmCop: Long? = costCop?.let { FinancialMath.precioMinimo(Money.of(it)).amountInCop }
+
+            val statusRaw = data["estado"]?.takeIf { it.isNotBlank() } ?: "Activo"
+            val estadoItem = EstadoItem.desde(statusRaw)
+
+            if (ppCop != null && pmCop != null && (estadoItem == EstadoItem.PUBLICADO || estadoItem == EstadoItem.NEGOCIACION)) {
+                if (pmCop > ppCop) {
+                    rowErrors.add(
+                        cellError(
+                            excelRow, "PM",
+                            "el Precio Mínimo calculado (${Money.of(pmCop).formatFormattedCop()}) no puede ser mayor al Precio Publicado PP (${Money.of(ppCop).formatFormattedCop()}) para productos en estado ${estadoItem.etiqueta}"
+                        )
                     )
-                )
+                }
             }
 
             if (rowErrors.isNotEmpty() || ppCop == null || pmCop == null || costCop == null) {

@@ -135,6 +135,8 @@ CORS_ALLOWED_HOST=tu-dominio.com          # Restringe CORS; vacío = cualquier o
 
 El sistema garantiza por diseño y por pruebas automatizadas que los campos sensibles —precio mínimo (`PM`), costo y margen— **nunca** se exponen a clientes, Shopify, Meta ni en la vitrina pública (`/public/p/{key}`).
 
+Las columnas formuladas o calculadas (como el **Precio Mínimo `PM` = `costo_total × (1 + roi_minimo_pct)`**, **Costo Total**, **Margen** o **Ganancia**) **ignoran por diseño cualquier valor digitado manualmente en celdas del Excel**. El sistema recomputa deterministamente su propia fórmula interna (`FinancialMath.precioMinimo`), garantizando concordancia del 100% entre memoria, Excel y triggers de base de datos.
+
 El motor de negociación (L0–L4) siempre cumple: $\text{Precio acordado} \ge L4 \ge PM$.
 
 ---
