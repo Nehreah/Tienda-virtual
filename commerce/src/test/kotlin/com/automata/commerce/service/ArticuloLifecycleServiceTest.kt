@@ -35,7 +35,7 @@ class ArticuloLifecycleServiceTest {
         estado = estado,
         fechaVenta = fechaVenta,
         vendidoEn = vendidoEn,
-        reparte = ReparteSocios(pctAntonio = 50.0.toBigDecimal(), pctJavier = 50.0.toBigDecimal())
+        reparte = ReparteSocios(mapOf(1L to java.math.BigDecimal(50), 2L to java.math.BigDecimal(50)))
     )
 
     @BeforeEach

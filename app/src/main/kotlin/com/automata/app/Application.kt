@@ -13,22 +13,35 @@ import com.automata.app.routes.*
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.InventarioRepository
+import com.automata.commerce.ports.InversionRepository
+import com.automata.commerce.ports.SocioRepository
+import com.automata.commerce.ports.VentaRepository
+import com.automata.commerce.ports.InMemoryInventarioRepository
+import com.automata.commerce.ports.InMemoryInversionRepository
+import com.automata.commerce.ports.InMemorySocioRepository
+import com.automata.commerce.ports.InMemoryVentaRepository
 import com.automata.commerce.model.ReconciliationReport
 import com.automata.commerce.service.AntiOversellSaga
 import com.automata.commerce.service.ArticuloLifecycleService
 import com.automata.commerce.service.ClienteService
 import com.automata.commerce.service.ConfirmPaymentUseCase
+import com.automata.commerce.service.MetricasService
 import com.automata.commerce.service.NegotiationEngine
 import com.automata.commerce.service.ReconcileCatalogUseCase
+import com.automata.commerce.service.SocioService
 import com.automata.commerce.service.StockDriftDetector
 import com.automata.infra.config.AppConfig
+import com.automata.infra.config.AppEnv
 import com.automata.infra.db.DatabaseFactory
 import com.automata.infra.db.ExposedConversationStore
 import com.automata.infra.db.ExposedImportacionesRepository
 import com.automata.infra.db.ExposedInventarioRepository
+import com.automata.infra.db.ExposedInversionRepository
 import com.automata.infra.db.ExposedProcessedEventStore
 import com.automata.infra.db.ExposedReservationRepository
+import com.automata.infra.db.ExposedSocioRepository
 import com.automata.infra.db.ExposedUnresolvedEventStore
+import com.automata.infra.db.ExposedVentaRepository
 import com.automata.infra.excel.ExcelPreviewService
 import com.automata.infra.excel.ExcelV2Parser
 import com.automata.infra.llm.GeminiLlmAdapter
@@ -84,70 +97,71 @@ object AppStore {
         fun missing(base: String, vararg keys: String) =
             if (keys.any { AppConfig.hasPlaceholder(it) }) "$base — hay valores de ejemplo (placeholders) sin reemplazar" else base
 
-        apiIntegrations.clear()
-        apiIntegrations.addAll(
-            listOf(
-                ApiIntegrationStatus(
-                    "Shopify GraphQL API", "E-Commerce",
-                    status(configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET")),
-                    if (configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET"))
-                        "Credenciales presentes • sin verificación en vivo"
-                    else missing("Faltan credenciales de Shopify", "SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "Meta Catalog API", "Catálogo",
-                    ApiStatus.DEGRADADO.takeIf { configured("META_CATALOG_ID", "META_ACCESS_TOKEN") } ?: ApiStatus.DESHABILITADO,
-                    missing("Adaptador pendiente: aún NO publica ni actualiza productos en Meta", "META_CATALOG_ID", "META_ACCESS_TOKEN"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "WhatsApp Cloud API", "Mensajería",
-                    status(configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN")),
-                    if (configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"))
-                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
-                    else missing("Faltan credenciales de WhatsApp", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "Instagram DM API", "Mensajería",
-                    status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
-                    if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
-                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
-                    else missing("Faltan META_PAGE_ID / META_ACCESS_TOKEN", "META_PAGE_ID", "META_ACCESS_TOKEN"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "Facebook Messenger API", "Mensajería",
-                    status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
-                    if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
-                        "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
-                    else missing("Faltan META_PAGE_ID / META_ACCESS_TOKEN", "META_PAGE_ID", "META_ACCESS_TOKEN"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "Gemini LLM Engine", "IA & NLP",
-                    status(configured("GEMINI_API_KEY")),
-                    if (configured("GEMINI_API_KEY")) "API key presente • el intérprete actual usa reglas locales (aún no llama a Gemini)"
-                    else missing("Falta GEMINI_API_KEY • el flujo usa el intérprete por reglas locales", "GEMINI_API_KEY"),
-                    noCheck
-                ),
-                ApiIntegrationStatus(
-                    "Base de Datos Operacional", "Almacenamiento",
-                    when {
-                        databaseConnected -> ApiStatus.FUNCIONAL
-                        AppConfig.databaseConfigured -> ApiStatus.DEGRADADO
-                        else -> ApiStatus.DESHABILITADO
-                    },
-                    when {
-                        databaseConnected -> "Supabase PostgreSQL conectada al iniciar"
-                        AppConfig.databaseConfigured -> "DATABASE_URL presente pero la conexión falló"
-                        else -> missing("Sin DATABASE_URL: almacenamiento solo en memoria (datos no persisten)", "DATABASE_URL")
-                    },
-                    if (databaseConnected) "Al iniciar" else noCheck
-                )
+        val freshList = listOf(
+            ApiIntegrationStatus(
+                "Shopify GraphQL API", "E-Commerce",
+                status(configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET")),
+                if (configured("SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET"))
+                    "Credenciales presentes • sin verificación en vivo"
+                else missing("Faltan credenciales de Shopify", "SHOPIFY_SHOP_DOMAIN", "SHOPIFY_ACCESS_TOKEN", "SHOPIFY_WEBHOOK_SECRET"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "Meta Catalog API", "Catálogo",
+                ApiStatus.DEGRADADO.takeIf { configured("META_CATALOG_ID", "META_ACCESS_TOKEN") } ?: ApiStatus.DESHABILITADO,
+                missing("Adaptador pendiente: aún NO publica ni actualiza productos en Meta", "META_CATALOG_ID", "META_ACCESS_TOKEN"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "WhatsApp Cloud API", "Mensajería",
+                status(configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN")),
+                if (configured("WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"))
+                    "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
+                else missing("Faltan credenciales de WhatsApp", "WHATSAPP_PHONE_NUMBER_ID", "WHATSAPP_ACCESS_TOKEN"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "Instagram DM API", "Mensajería",
+                status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
+                if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
+                    "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
+                else missing("Faltan META_PAGE_ID / META_ACCESS_TOKEN", "META_PAGE_ID", "META_ACCESS_TOKEN"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "Facebook Messenger API", "Mensajería",
+                status(configured("META_PAGE_ID", "META_ACCESS_TOKEN")),
+                if (configured("META_PAGE_ID", "META_ACCESS_TOKEN"))
+                    "Envío configurado (${AppConfig.metaGraphApiVersion}) • $metaSig • recepción conectada al pipeline de mensajes"
+                else missing("Faltan META_PAGE_ID / META_ACCESS_TOKEN", "META_PAGE_ID", "META_ACCESS_TOKEN"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "Gemini LLM Engine", "IA & NLP",
+                status(configured("GEMINI_API_KEY")),
+                if (configured("GEMINI_API_KEY")) "API key presente • el intérprete actual usa reglas locales (aún no llama a Gemini)"
+                else missing("Falta GEMINI_API_KEY • el flujo usa el intérprete por reglas locales", "GEMINI_API_KEY"),
+                noCheck
+            ),
+            ApiIntegrationStatus(
+                "Base de Datos Operacional", "Almacenamiento",
+                when {
+                    databaseConnected -> ApiStatus.FUNCIONAL
+                    AppConfig.databaseConfigured -> ApiStatus.DEGRADADO
+                    else -> ApiStatus.DESHABILITADO
+                },
+                when {
+                    databaseConnected -> "Supabase PostgreSQL conectada al iniciar"
+                    AppConfig.databaseConfigured -> "DATABASE_URL presente pero la conexión falló"
+                    else -> missing("Sin DATABASE_URL: almacenamiento solo en memoria (datos no persisten)", "DATABASE_URL")
+                },
+                if (databaseConnected) "Al iniciar" else noCheck
             )
         )
+        synchronized(apiIntegrations) {
+            apiIntegrations.clear()
+            apiIntegrations.addAll(freshList)
+        }
     }
 }
 
@@ -173,9 +187,13 @@ object AppStoreCatalog : PipelineCatalog {
     }
 }
 
+private var cachedSecurityPlan: DashboardSecurity.Plan? = null
+
 fun main() {
     val securityPlan = try {
-        DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword)
+        DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword).also {
+            cachedSecurityPlan = it
+        }
     } catch (e: IllegalStateException) {
         logger.error("ERROR DE CONFIGURACIÓN: la aplicación no arrancará.")
         logger.error("  ${e.message}")
@@ -191,7 +209,14 @@ fun main() {
             logger.info("Conexión a Supabase establecida correctamente.")
         } catch (e: Exception) {
             logger.error("No se pudo conectar a Supabase: ${e.message}", e)
+            if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+                logger.error("ERROR CRÍTICO: En APP_ENV=production la base de datos es obligatoria. Deteniendo servidor.")
+                exitProcess(1)
+            }
         }
+    } else if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+        logger.error("ERROR CRÍTICO: En APP_ENV=production DATABASE_URL es obligatoria. Deteniendo servidor.")
+        exitProcess(1)
     }
 
     if (AppStore.databaseConnected) {
@@ -233,7 +258,16 @@ fun main() {
     logger.info("  Servidor iniciado en http://${securityPlan.host}:$port  (APP_ENV=${AppConfig.appEnv.name.lowercase()})")
     logger.info("  Canales Activos: Shopify GraphQL, Meta Catalog, WhatsApp, IG, Messenger")
     logger.info("===============================================================")
-    embeddedServer(Netty, port = port, host = securityPlan.host, module = Application::module).start(wait = true)
+    try {
+        embeddedServer(Netty, port = port, host = securityPlan.host, module = Application::module).start(wait = true)
+    } catch (e: Exception) {
+        logger.error("ERROR CRÍTICO AL INICIAR SERVIDOR WEB (puerto $port, host ${securityPlan.host}): ${e.message}")
+        if (e.message?.contains("Address already in use", ignoreCase = true) == true || e is java.net.BindException) {
+            logger.error("  SUGERENCIA: El puerto $port ya está en uso por otro proceso (por ejemplo, la primera copia del proyecto en ejecución).")
+            logger.error("  Cierra la otra instancia o define un puerto distinto mediante la variable PORT en local.properties (ejemplo: PORT=8081).")
+        }
+        exitProcess(1)
+    }
 }
 
 fun Application.module() {
@@ -249,10 +283,11 @@ fun Application.module() {
         call.response.header("X-Frame-Options", "DENY")
         call.response.header("X-Content-Type-Options", "nosniff")
         call.response.header("Referrer-Policy", "no-referrer")
+        val cspScript = if (AppConfig.appEnv == AppEnv.PRODUCTION) "script-src 'self' https://cdn.tailwindcss.com;" else "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;"
         call.response.header(
             "Content-Security-Policy",
             "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; " +
-            "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; img-src 'self' data:; frame-ancestors 'none'"
+            "$cspScript img-src 'self' data:; frame-ancestors 'none'"
         )
     }
 
@@ -315,11 +350,13 @@ fun Application.module() {
         logger.warn("ADVERTENCIA: META_APP_SECRET vacío; POST /webhooks/meta responderá 503 hasta que lo definas.")
     }
     if (AppConfig.metaWebhookVerifyToken.isBlank()) {
-        logger.warn("ADVERTENCIA: META_WEBHOOK_VERIFY_TOKEN vacío; Meta no podrá verificar GET /webhooks/meta.")
+        logger.warn("ADVERTENCIA: META_WEBHOOK_VERHOOK_VERIFY_TOKEN vacío; Meta no podrá verificar GET /webhooks/meta.")
     }
 
+    val securityPlan = cachedSecurityPlan ?: DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword)
+
     val dashboardGuard = DashboardGuard(
-        auth = DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword).auth,
+        auth = securityPlan.auth,
         throttle = AuthThrottle(),
         trustProxy = AppConfig.trustProxyHeaders
     )
@@ -339,11 +376,13 @@ fun Application.module() {
         }
     } else null
 
+    val conversationStore = if (AppStore.databaseConnected) ExposedConversationStore() else InMemoryConversationStore()
+
     val inboundPipeline = InboundMessagePipeline(
         llm = llmAdapter,
         engine = negotiationEngine,
         catalog = AppStoreCatalog,
-        conversations = if (AppStore.databaseConnected) ExposedConversationStore() else InMemoryConversationStore(),
+        conversations = conversationStore,
         router = channelRouter,
         paymentInstructions = AppConfig.paymentInstructions,
         reservationRepo = reservationRepo
@@ -398,6 +437,12 @@ fun Application.module() {
         importacionesRepo = importacionesRepo
     )
 
+    val socioRepo: SocioRepository = if (AppStore.databaseConnected) ExposedSocioRepository() else InMemorySocioRepository()
+    val inversionRepo: InversionRepository = if (AppStore.databaseConnected) ExposedInversionRepository() else InMemoryInversionRepository()
+    val socioService = SocioService(socioRepo)
+    val metricasService = MetricasService()
+    val ventaRepo: VentaRepository = if (AppStore.databaseConnected) ExposedVentaRepository() else InMemoryVentaRepository()
+
     routing {
         dashboardRoutes(dashboardGuard, llmAdapter, negotiationEngine)
         excelRoutes(dashboardGuard, dbRepository, importacionesRepo, excelPreviewService, excelParser)
@@ -405,8 +450,11 @@ fun Application.module() {
         reconciliacionRoutes(dashboardGuard, reconcileUseCase)
         eventosDerivaRoutes(dashboardGuard, unresolvedEventStore, stockDriftDetector)
         clientesRoutes(dashboardGuard, clienteService)
-        pagosRoutes(dashboardGuard, confirmPaymentUseCase, inboundPipeline, antiOversellSaga)
-        webhookRoutes(shopifyWebhookHandler, metaWebhookReceiver, processedEvents, dbRepository, antiOversellSaga, inboundPipeline, pipelineScope)
+        pagosRoutes(dashboardGuard, confirmPaymentUseCase, inboundPipeline, antiOversellSaga, conversationStore)
+        webhookRoutes(shopifyWebhookHandler, metaWebhookReceiver, processedEvents, dbRepository, antiOversellSaga, inboundPipeline, pipelineScope, inboundWorker)
+        sociosRoutes(dashboardGuard, socioService, socioRepo)
+        inversionRoutes(dashboardGuard, inversionRepo, dbRepository ?: InMemoryInventarioRepository(), socioRepo)
+        metricasRoutes(dashboardGuard, metricasService, dbRepository ?: InMemoryInventarioRepository(), ventaRepo, socioRepo)
         publicRoutes()
     }
 }

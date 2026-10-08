@@ -1,19 +1,20 @@
 package com.automata.infra.db
 
-import com.automata.commerce.model.Metrica
 import com.automata.commerce.model.Periodo
 import com.automata.commerce.model.Venta
+import com.automata.commerce.model.VentaReparto
 import com.automata.commerce.ports.VentaRepository
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import com.automata.shared.SignedCop
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.SortOrder
+import org.jetbrains.exposed.sql.SqlExpressionBuilder.eq
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 
-/** Solo lectura: ventas y métricas las escribe la base con triggers. */
+/** Solo lectura: ventas y repartos las escribe la base con triggers. */
 class ExposedVentaRepository : VentaRepository {
 
     override fun findByKey(key: ProductKey): Venta? = transaction {
@@ -26,16 +27,13 @@ class ExposedVentaRepository : VentaRepository {
             .map { it.toVenta() }
     }
 
-    override fun metricaDe(key: ProductKey): Metrica? = transaction {
-        MetricasTable.select { MetricasTable.key eq key.value }.singleOrNull()?.let {
-            Metrica(
-                key = key,
-                ingresosAntonio = Money.of(it[MetricasTable.ingresosAntonio]),
-                gananciasAntonio = SignedCop(it[MetricasTable.gananciasAntonio]),
-                ingresosJavier = Money.of(it[MetricasTable.ingresosJavier]),
-                gananciasJavier = SignedCop(it[MetricasTable.gananciasJavier])
-            )
-        }
+    override fun repartosDe(key: ProductKey): List<VentaReparto> = transaction {
+        VentaRepartoTable.select { VentaRepartoTable.key eq key.value }
+            .map { it.toVentaReparto() }
+    }
+
+    override fun repartos(): List<VentaReparto> = transaction {
+        VentaRepartoTable.selectAll().map { it.toVentaReparto() }
     }
 
     private fun ResultRow.toVenta() = Venta(
@@ -49,6 +47,16 @@ class ExposedVentaRepository : VentaRepository {
         margenPct = this[VentasTable.margenPct]?.toDouble(),
         tiempoDias = this[VentasTable.tiempoDias],
         diasPublicado = this[VentasTable.diasPublicado],
-        periodo = this[VentasTable.periodo]?.let { Periodo.desdeEtiqueta(it) }
+        periodo = this[VentasTable.periodo]?.let { Periodo.desdeEtiqueta(it) },
+        precioPublicado = this[VentasTable.precioPublicado]?.let { Money.of(it) }
+    )
+
+    private fun ResultRow.toVentaReparto() = VentaReparto(
+        key = ProductKey(this[VentaRepartoTable.key]),
+        socioId = this[VentaRepartoTable.socioId],
+        pct = this[VentaRepartoTable.pct],
+        inversion = this[VentaRepartoTable.inversion],
+        ingresos = this[VentaRepartoTable.ingresos],
+        ganancia = this[VentaRepartoTable.ganancia]
     )
 }

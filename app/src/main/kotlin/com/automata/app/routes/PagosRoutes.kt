@@ -8,6 +8,7 @@ import com.automata.app.pipeline.InboundMessagePipeline
 import com.automata.commerce.service.AntiOversellSaga
 import com.automata.commerce.service.ConfirmPaymentRequest
 import com.automata.commerce.service.ConfirmPaymentUseCase
+import com.automata.messaging.ports.ConversationStore
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
 import io.ktor.http.*
@@ -23,7 +24,8 @@ fun Route.pagosRoutes(
     dashboardGuard: DashboardGuard,
     confirmPaymentUseCase: ConfirmPaymentUseCase,
     inboundPipeline: InboundMessagePipeline,
-    antiOversellSaga: AntiOversellSaga
+    antiOversellSaga: AntiOversellSaga,
+    conversationStore: ConversationStore? = null
 ) {
     post("/api/confirmar-pago") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
@@ -53,7 +55,13 @@ fun Route.pagosRoutes(
         }
 
         val productKey = foundProduct?.key ?: ProductKey(deal?.productKey ?: "")
-        val salePrice = deal?.offeredPrice ?: foundProduct?.publishedPrice ?: Money.of(0)
+        
+        // Obtener el precio acordado de la conversación en BD si está disponible
+        val agreedPriceCop = conversationStore?.findById(dealId)?.agreedPriceCop
+        val salePrice = agreedPriceCop?.let { Money.of(it) }
+            ?: deal?.offeredPrice
+            ?: foundProduct?.publishedPrice
+            ?: Money.of(0)
 
         if (salePrice.amountInCop <= 0) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "El precio de venta debe ser mayor a 0 (A5)"))
@@ -105,7 +113,8 @@ fun Route.pagosRoutes(
                 val label = if (pipelineConfirmed) "Pago confirmado — pendiente envío" else "Pago confirmado"
                 AppStore.chatDeals[idx] = currentDeal.copy(
                     dealState = DealState.PENDIENTE_ENVIO,
-                    dealStateLabel = label
+                    dealStateLabel = label,
+                    offeredPrice = salePrice
                 )
             }
         }

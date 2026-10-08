@@ -25,11 +25,20 @@ class ExposedInventarioRepository : InventarioRepository {
     private val logger = LoggerFactory.getLogger(ExposedInventarioRepository::class.java)
 
     override fun findAll(): List<InventarioItem> = transaction {
-        InventarioTable.selectAll().orderBy(InventarioTable.key).map { it.toItem() }
+        val items = InventarioTable.selectAll().orderBy(InventarioTable.key).toList()
+        val inversions = InventarioInversionTable.selectAll().toList().groupBy { ProductKey(it[InventarioInversionTable.key]) }
+        items.map { row ->
+            val key = ProductKey(row[InventarioTable.key])
+            val invMap = inversions[key]?.associate { it[InventarioInversionTable.socioId] to it[InventarioInversionTable.pct] } ?: emptyMap()
+            row.toItem(ReparteSocios(invMap))
+        }
     }
 
     override fun findByKey(key: ProductKey): InventarioItem? = transaction {
-        InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
+        val row = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull() ?: return@transaction null
+        val invMap = InventarioInversionTable.select { InventarioInversionTable.key eq key.value }
+            .associate { it[InventarioInversionTable.socioId] to it[InventarioInversionTable.pct] }
+        row.toItem(ReparteSocios(invMap))
     }
 
     override fun upsert(item: InventarioItem, usuario: String?, origen: String): InventarioItem =
@@ -38,8 +47,6 @@ class ExposedInventarioRepository : InventarioRepository {
                 .singleOrNull()
                 ?.let { EstadoItem.desdeEtiqueta(it[InventarioTable.estado]) }
 
-            // Una importación (Excel) o cualquier upsert no debe "des-vender" un producto por accidente:
-            // para reabrir una venta se usa anularVenta().
             if (estadoActual == EstadoItem.VENDIDO && !item.estaVendido) {
                 throw IllegalStateException(
                     "El producto ${item.key} ya está vendido; no se puede sobrescribir. Usa anularVenta() si quieres reabrirlo."
@@ -53,7 +60,7 @@ class ExposedInventarioRepository : InventarioRepository {
                     it.escribir(item)
                 }
             }
-            InventarioTable.select { InventarioTable.key eq item.key.value }.single().toItem()
+            findByKey(item.key)!!
         }
 
     override fun marcarVendido(
@@ -64,32 +71,27 @@ class ExposedInventarioRepository : InventarioRepository {
         usuario: String?,
         origen: String
     ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
-        val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
-            ?: return@tx null
-        val vendido = actual.registrarVenta(vendidoEn, fecha, canal)   // falla si ya estaba vendido o falta el reparto
+        val actual = findByKey(key) ?: return@tx null
+        val vendido = actual.registrarVenta(vendidoEn, fecha, canal)
 
-        // UNA sola sentencia UPDATE: el trigger de la base ve estado + fecha + precio + canal a la vez,
-        // crea la venta y las métricas por socio.
         InventarioTable.update({ InventarioTable.key eq key.value }) {
             it[InventarioTable.fechaVenta] = vendido.fechaVenta
             it[InventarioTable.vendidoEn] = vendido.vendidoEn?.amountInCop
             it[InventarioTable.canalVenta] = vendido.canalVenta
             it[InventarioTable.estado] = vendido.estado.etiqueta
         }
-        InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+        findByKey(key)
     }
 
     override fun anularVenta(key: ProductKey, usuario: String?, origen: String): InventarioItem? =
         DatabaseFactory.tx(origen, usuario) {
-            val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
-                ?: return@tx null
-            val reabierto = actual.anularVenta()   // falla si no estaba vendido
+            val actual = findByKey(key) ?: return@tx null
+            val reabierto = actual.anularVenta()
 
-            // El trigger borra la venta y las métricas y limpia fecha_venta / vendido_en / canal_venta.
             InventarioTable.update({ InventarioTable.key eq key.value }) {
                 it[InventarioTable.estado] = reabierto.estado.etiqueta
             }
-            InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+            findByKey(key)
         }
 
     override fun venderUnidades(
@@ -151,8 +153,7 @@ class ExposedInventarioRepository : InventarioRepository {
         motivo: String,
         origen: String
     ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
-        val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
-            ?: return@tx null
+        val actual = findByKey(key) ?: return@tx null
         check(actual.estado != EstadoItem.VENDIDO) { "No se puede archivar el producto $key porque está Vendido." }
         InventarioTable.update({ InventarioTable.key eq key.value }) {
             it[InventarioTable.estado] = EstadoItem.INACTIVO.etiqueta
@@ -160,7 +161,7 @@ class ExposedInventarioRepository : InventarioRepository {
             it[InventarioTable.archivadoPor] = usuario
             it[InventarioTable.motivoArchivo] = motivo
         }
-        InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+        findByKey(key)
     }
 
     override fun restaurar(
@@ -168,15 +169,14 @@ class ExposedInventarioRepository : InventarioRepository {
         usuario: String?,
         origen: String
     ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
-        val actual = InventarioTable.select { InventarioTable.key eq key.value }.singleOrNull()?.toItem()
-            ?: return@tx null
+        val actual = findByKey(key) ?: return@tx null
         InventarioTable.update({ InventarioTable.key eq key.value }) {
             it[InventarioTable.estado] = EstadoItem.PUBLICADO.etiqueta
             it[InventarioTable.archivadoEn] = null
             it[InventarioTable.archivadoPor] = null
             it[InventarioTable.motivoArchivo] = null
         }
-        InventarioTable.select { InventarioTable.key eq key.value }.single().toItem()
+        findByKey(key)
     }
 
     override fun eliminar(
@@ -195,10 +195,6 @@ class ExposedInventarioRepository : InventarioRepository {
         inVentas || inReservas || inConversaciones
     }
 
-    /**
-     * Escribe todas las columnas editables. No toca la Key, ni costo_total ni precio_minimo
-     * (los calcula la base con triggers).
-     */
     private fun UpdateBuilder<*>.escribir(item: InventarioItem) {
         this[InventarioTable.item] = item.item
         this[InventarioTable.tipo] = item.tipo
@@ -213,8 +209,6 @@ class ExposedInventarioRepository : InventarioRepository {
         this[InventarioTable.vendidoEn] = item.vendidoEn?.amountInCop
         this[InventarioTable.canalVenta] = item.canalVenta
         this[InventarioTable.requiereReparacion] = item.requiereReparacion
-        this[InventarioTable.pctAntonio] = item.reparte.pctAntonio
-        this[InventarioTable.pctJavier] = item.reparte.pctJavier
         this[InventarioTable.descripcion] = item.descripcion
         this[InventarioTable.marca] = item.marca
         this[InventarioTable.condicion] = item.condicion
@@ -225,7 +219,7 @@ class ExposedInventarioRepository : InventarioRepository {
         this[InventarioTable.motivoArchivo] = item.motivoArchivo
     }
 
-    private fun ResultRow.toItem() = InventarioItem(
+    private fun ResultRow.toItem(reparte: ReparteSocios = ReparteSocios.SIN_DEFINIR) = InventarioItem(
         key = ProductKey(this[InventarioTable.key]),
         item = this[InventarioTable.item],
         link = this[InventarioTable.link],
@@ -246,7 +240,7 @@ class ExposedInventarioRepository : InventarioRepository {
         cantidad = this[InventarioTable.cantidad],
         ubicacion = this[InventarioTable.ubicacion],
         requiereReparacion = this[InventarioTable.requiereReparacion],
-        reparte = ReparteSocios(this[InventarioTable.pctAntonio], this[InventarioTable.pctJavier]),
+        reparte = reparte,
         canalVenta = this[InventarioTable.canalVenta],
         archivadoEn = this[InventarioTable.archivadoEn],
         archivadoPor = this[InventarioTable.archivadoPor],

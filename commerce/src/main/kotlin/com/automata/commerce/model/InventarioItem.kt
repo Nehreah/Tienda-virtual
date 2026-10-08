@@ -76,7 +76,7 @@ data class InventarioItem(
      */
     fun registrarVenta(vendidoEn: Money, fecha: LocalDate, canal: String? = null): InventarioItem {
         check(!estaVendido) { "El producto $key ya está vendido" }
-        check(reparte.definida) { "Define el % de Antonio y Javier (suman 100) antes de vender $key" }
+        check(reparte.definida) { "Para vender $key los porcentajes de inversión de los socios deben sumar 100 y contar con al menos 1 socio." }
         require(fechaCompra == null || !fecha.isBefore(fechaCompra)) {
             "La fecha de venta no puede ser anterior a la de compra en $key"
         }

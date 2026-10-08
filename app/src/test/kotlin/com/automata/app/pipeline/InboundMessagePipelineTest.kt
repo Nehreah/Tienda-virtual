@@ -61,7 +61,7 @@ class InboundMessagePipelineTest {
         val port = FakePort("whatsapp")
         val store = InMemoryConversationStore()
         // Fase 3.1: seed fija para que los tests de negociación sean deterministas
-        val engine = NegotiationEngine(random = kotlin.random.Random(seed = 0L))
+        val engine = NegotiationEngine(random = java.util.Random(0L))
         val pipeline = InboundMessagePipeline(llm, engine, catalog, store, ChannelRouter(listOf(port)))
     }
 

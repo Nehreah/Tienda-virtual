@@ -29,7 +29,7 @@ class ConfirmPaymentUseCaseTest {
             precioCompra = Money.of(70_000),
             costoTotal = Money.of(70_000),
             estado = EstadoItem.PUBLICADO,
-            reparte = ReparteSocios(pctAntonio = 50.0.toBigDecimal(), pctJavier = 50.0.toBigDecimal())
+            reparte = ReparteSocios(mapOf(1L to java.math.BigDecimal(50), 2L to java.math.BigDecimal(50)))
         )
         useCase = ConfirmPaymentUseCase(repo)
     }

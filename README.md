@@ -118,7 +118,7 @@ PAYMENT_INSTRUCTIONS=Paga por Nequi al 3XX XXX XXXX a nombre de TU NOMBRE.
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=una_clave_larga_y_unica
 
-# Gemini LLM — interpreta mensajes de clientes
+# Gemini LLM (Opcional) — interpreta intenciones con IA. Si no se configura, el bot opera con el motor de reglas locales por expresiones regulares (sin IA).
 GEMINI_API_KEY=AIzaSyxxxxxxxxxxxxxxxxxxxxxxx
 
 # Opcionales de seguridad

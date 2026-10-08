@@ -8,12 +8,9 @@ import org.jetbrains.exposed.sql.javatime.timestamp
 import org.postgresql.util.PGobject
 
 /**
- * Tablas Exposed del esquema "tienda" (ver db/migracion_fase2.sql).
- * Las columnas que maneja la base (created_at, updated_at) no se declaran: la aplicación no las escribe.
- * Las marcadas databaseGenerated() las calcula un trigger: la aplicación solo las lee.
+ * Tablas Exposed del esquema "tienda".
  */
 
-/** jsonb leído como String (solo lectura; el historial lo escriben los triggers). */
 class JsonbTextColumnType : ColumnType() {
     override fun sqlType(): String = "JSONB"
     override fun valueFromDB(value: Any): Any = when (value) {
@@ -24,7 +21,6 @@ class JsonbTextColumnType : ColumnType() {
 
 fun Table.jsonbText(name: String): Column<String> = registerColumn<String>(name, JsonbTextColumnType())
 
-/** Idempotencia de webhooks (ver db/migracion_fase3_idempotencia.sql). procesado_en lo pone la base. */
 object EventosProcesadosTable : Table("tienda.eventos_procesados") {
     val canal = text("canal")
     val eventoExternoId = text("evento_externo_id")
@@ -34,25 +30,41 @@ object EventosProcesadosTable : Table("tienda.eventos_procesados") {
     override val primaryKey = PrimaryKey(canal, eventoExternoId)
 }
 
+object SociosTable : Table("tienda.socio") {
+    val id = long("id").autoIncrement()
+    val nombre = text("nombre")
+    val activo = bool("activo").default(true)
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val archivadoEn = timestamp("archivado_en").nullable()
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object InventarioInversionTable : Table("tienda.inventario_inversion") {
+    val key = text("key")
+    val socioId = long("socio_id")
+    val pct = decimal("pct", 5, 2)
+
+    override val primaryKey = PrimaryKey(key, socioId)
+}
+
 object InventarioTable : Table("tienda.inventario") {
     val key = text("key")
     val item = text("item")
-    val tipo = text("tipo").nullable()                          // antes tienda.clasificacion.categoria
+    val tipo = text("tipo").nullable()
     val link = text("link").nullable()
-    val fotos = text("fotos")                                   // URLs separadas por salto de línea
+    val fotos = text("fotos")
     val estado = text("estado")
     val fechaCompra = date("fecha_compra").nullable()
     val fechaPublicacion = date("fecha_publicacion").nullable()
     val fechaVenta = date("fecha_venta").nullable()
     val precioPublicado = long("precio_publicado").nullable()
-    val precioMinimo = long("precio_minimo").nullable().databaseGenerated()   // trigger: costo_total × 1,5 (hacia arriba)
+    val precioMinimo = long("precio_minimo").nullable().databaseGenerated()
     val precioCompra = long("precio_compra")
     val vendidoEn = long("vendido_en").nullable()
-    val canalVenta = text("canal_venta").nullable()             // antes tienda.canal_venta
+    val canalVenta = text("canal_venta").nullable()
     val requiereReparacion = bool("requiere_reparacion")
-    val pctAntonio = decimal("pct_antonio", 5, 2)               // antes tienda.inversion
-    val pctJavier = decimal("pct_javier", 5, 2)
-    val costoTotal = long("costo_total").databaseGenerated()    // antes costo_compra_reparacion; lo mantiene el trigger
+    val costoTotal = long("costo_total").databaseGenerated()
     val descripcion = text("descripcion").nullable()
     val marca = text("marca").nullable()
     val condicion = text("condicion").nullable()
@@ -73,7 +85,6 @@ object ReparacionesTable : Table("tienda.reparaciones") {
     override val primaryKey = PrimaryKey(key)
 }
 
-/** Solo lectura: la llena el trigger de Inventario. */
 object VentasTable : Table("tienda.ventas") {
     val key = text("key")
     val fechaVenta = date("fecha_venta")
@@ -87,19 +98,20 @@ object VentasTable : Table("tienda.ventas") {
     val tiempoDias = integer("tiempo_dias").nullable()
     val diasPublicado = integer("dias_publicado").nullable()
     val periodo = text("periodo").nullable()
+    val precioPublicado = long("precio_publicado").nullable()
 
     override val primaryKey = PrimaryKey(key)
 }
 
-/** Solo lectura: la llena el trigger de Inventario. */
-object MetricasTable : Table("tienda.metricas") {
+object VentaRepartoTable : Table("tienda.venta_reparto") {
     val key = text("key")
-    val ingresosAntonio = long("ingresos_antonio")
-    val gananciasAntonio = long("ganancias_antonio")
-    val ingresosJavier = long("ingresos_javier")
-    val gananciasJavier = long("ganancias_javier")
+    val socioId = long("socio_id")
+    val pct = decimal("pct", 5, 2)
+    val inversion = long("inversion")
+    val ingresos = long("ingresos")
+    val ganancia = long("ganancia")
 
-    override val primaryKey = PrimaryKey(key)
+    override val primaryKey = PrimaryKey(key, socioId)
 }
 
 object HistorialTable : Table("tienda.historial") {
@@ -217,5 +229,3 @@ object EventosSinResolverTable : Table("tienda.eventos_sin_resolver") {
 
     override val primaryKey = PrimaryKey(id)
 }
-
-

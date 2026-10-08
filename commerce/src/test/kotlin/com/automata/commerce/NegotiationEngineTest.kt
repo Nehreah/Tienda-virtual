@@ -12,7 +12,7 @@ import org.junit.jupiter.api.Test
 class NegotiationEngineTest {
 
     // Fase 3.1: Random fijo para tests deterministas.
-    private val engine = NegotiationEngine(random = Random(seed = 42L))
+    private val engine = NegotiationEngine(random = java.util.Random(42L))
 
     private val sampleProduct = CommercialProduct(
         key = ProductKey("PROD-001"),

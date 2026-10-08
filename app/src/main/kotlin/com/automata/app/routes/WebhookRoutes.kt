@@ -7,6 +7,7 @@ import com.automata.app.dashboard.DealState
 import com.automata.app.dashboard.ChatDealLog
 import com.automata.app.pipeline.InboundMessagePipeline
 import com.automata.app.pipeline.PipelineOutcome
+import com.automata.app.workers.InboundWebhookWorker
 import com.automata.commerce.ports.InventarioRepository
 import com.automata.commerce.service.AntiOversellSaga
 import com.automata.infra.config.AppConfig
@@ -67,18 +68,20 @@ fun Route.webhookRoutes(
     dbRepository: InventarioRepository?,
     antiOversellSaga: AntiOversellSaga,
     inboundPipeline: InboundMessagePipeline,
-    pipelineScope: CoroutineScope
+    pipelineScope: CoroutineScope,
+    inboundWorker: InboundWebhookWorker? = null
 ) {
     // 5. Webhook Shopify HMAC
     post("/webhooks/shopify") {
         val topic = call.request.headers["X-Shopify-Topic"]
         val hmac = call.request.headers["X-Shopify-Hmac-SHA256"]
-        val contentLength = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0L
-        if (contentLength > 1_048_576L) {
+        
+        // Fase 4.2 / Hallazgo 6: lectura segura con verificación de tamaño en bytes recibidos (anti-chunked OOM)
+        val bodyBytes = call.receive<ByteArray>()
+        if (bodyBytes.size > 1_048_576) {
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "Payload demasiado grande (máx 1 MB)"))
             return@post
         }
-        val bodyBytes = call.receive<ByteArray>()
 
         val result = shopifyWebhookHandler.handleWebhook(topic, hmac, bodyBytes)
 
@@ -138,6 +141,7 @@ fun Route.webhookRoutes(
             }
             if (shopifyEventId != null) processedEvents.markDone("shopify", shopifyEventId)
         } catch (e: Exception) {
+            if (e is CancellationException) throw e
             if (shopifyEventId != null) processedEvents.markFailed("shopify", shopifyEventId, e.message)
             logger.error("Error procesando webhook de Shopify: ${e.message}", e)
             call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "Error procesando orden de Shopify"))
@@ -162,12 +166,12 @@ fun Route.webhookRoutes(
     }
 
     post("/webhooks/meta") {
-        val contentLengthMeta = call.request.headers[HttpHeaders.ContentLength]?.toLongOrNull() ?: 0L
-        if (contentLengthMeta > 1_048_576L) {
+        // Fase 4.2 / Hallazgo 6: lectura segura con verificación de tamaño en bytes recibidos (anti-chunked OOM)
+        val bodyBytes = call.receive<ByteArray>()
+        if (bodyBytes.size > 1_048_576) {
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "Payload demasiado grande (máx 1 MB)"))
             return@post
         }
-        val bodyBytes = call.receive<ByteArray>()
 
         when (metaWebhookReceiver.authenticate(bodyBytes, call.request.headers["X-Hub-Signature-256"], AppConfig.metaAppSecret)) {
             MetaWebhookReceiver.SignatureResult.SECRET_NOT_CONFIGURED -> {
@@ -185,16 +189,24 @@ fun Route.webhookRoutes(
 
         for (event in inboundEvents) {
             if (!processedEvents.tryStartProcessing(event.channel, event.messageId)) continue
-            pipelineScope.launch {
-                try {
-                    recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
-                    processedEvents.markDone(event.channel, event.messageId)
-                } catch (e: CancellationException) {
-                    processedEvents.markFailed(event.channel, event.messageId, "Cancelled")
-                    throw e
-                } catch (e: Exception) {
-                    processedEvents.markFailed(event.channel, event.messageId, e.message)
-                    logger.error("Error procesando mensaje de [${event.channel}] ${event.senderId}: ${e.message}", e)
+            
+            if (inboundWorker != null) {
+                // Cola durable en BD: guardar primero antes de responder 200 a Meta
+                inboundWorker.enqueue(event.channel, event.senderId, event.messageId, event.text)
+                processedEvents.markDone(event.channel, event.messageId)
+            } else {
+                // Modo sin BD: procesar en segundo plano en memoria
+                pipelineScope.launch {
+                    try {
+                        recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
+                        processedEvents.markDone(event.channel, event.messageId)
+                    } catch (e: CancellationException) {
+                        processedEvents.markFailed(event.channel, event.messageId, "Cancelled")
+                        throw e
+                    } catch (e: Exception) {
+                        processedEvents.markFailed(event.channel, event.messageId, e.message)
+                        logger.error("Error procesando mensaje de [${event.channel}] ${event.senderId}: ${e.message}", e)
+                    }
                 }
             }
         }

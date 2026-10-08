@@ -76,23 +76,44 @@ object FinancialMath {
     }
 
     /**
-     * Reparte [valor] entre Antonio y Javier según sus porcentajes de inversión.
-     * Antonio = valor × pctAntonio / (pctAntonio + pctJavier), redondeado al peso;
-     * Javier = valor − Antonio, así la suma siempre cuadra exacto.
-     * Devuelve null si aún no hay reparto definido (ambos porcentajes en 0).
-     *
-     * Sirve igual para el Retorno (valor = Vendido en) y para la Ganancia (valor = ganancia neta, puede ser negativa).
+     * Reparte [valor] entre N socios según sus porcentajes de inversión utilizando el método del mayor residuo.
+     * Garantiza que la suma de los montos repartidos cuadre exactamente con [valor].
+     * Devuelve null si no hay porcentajes definidos (suma <= 0).
      */
-    fun repartir(valor: Long, pctAntonio: BigDecimal, pctJavier: BigDecimal): Pair<Long, Long>? {
-        val total = pctAntonio + pctJavier
-        if (total.signum() <= 0) return null
-        val antonio = BigDecimal.valueOf(valor)
-            .multiply(pctAntonio)
-            .divide(total, 0, RoundingMode.HALF_UP)
-            .toLong()
-        return antonio to (valor - antonio)
+    fun repartir(valor: Long, porSocio: Map<Long, BigDecimal>): Map<Long, Long>? {
+        val totalPct = porSocio.values.fold(BigDecimal.ZERO) { acc, b -> acc + b }
+        if (totalPct.signum() <= 0) return null
+
+        val valBd = BigDecimal.valueOf(valor)
+        val exactos = porSocio.mapValues { (_, pct) ->
+            valBd.multiply(pct).divide(totalPct, 10, RoundingMode.HALF_UP)
+        }
+
+        val pisos = exactos.mapValues { (_, exacto) -> exacto.setScale(0, RoundingMode.FLOOR).longValueExact() }
+        val sumaPisos = pisos.values.sum()
+        var faltantes = (valor - sumaPisos).toInt()
+
+        val residuos = exactos.map { (id, exacto) ->
+            val piso = pisos.getValue(id)
+            val resto = exacto.subtract(BigDecimal.valueOf(piso))
+            Triple(id, resto, piso)
+        }.sortedWith(compareByDescending<Triple<Long, BigDecimal, Long>> { it.second }.thenBy { it.first })
+
+        val resultado = HashMap<Long, Long>()
+        for (triple in residuos) {
+            val id = triple.first
+            val base = triple.third
+            val extra = if (faltantes > 0) {
+                faltantes--
+                1L
+            } else {
+                0L
+            }
+            resultado[id] = base + extra
+        }
+        return resultado
     }
 
-    fun repartir(valor: Long, reparte: ReparteSocios): Pair<Long, Long>? =
-        repartir(valor, reparte.pctAntonio, reparte.pctJavier)
+    fun repartir(valor: Long, reparte: ReparteSocios): Map<Long, Long>? =
+        repartir(valor, reparte.porSocio)
 }

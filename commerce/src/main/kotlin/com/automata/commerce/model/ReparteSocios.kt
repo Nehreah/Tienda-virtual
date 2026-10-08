@@ -2,37 +2,53 @@ package com.automata.commerce.model
 
 import com.automata.commerce.service.FinancialMath
 import java.math.BigDecimal
-
-enum class Socio { ANTONIO, JAVIER }
+import java.time.Instant
 
 /**
- * Reparto de la inversión entre socios. Vive en las columnas pct_antonio / pct_javier de
- * tienda.inventario (reemplaza a la antigua tabla tienda.inversion).
+ * Entidad Socio dinámico.
+ */
+data class Socio(
+    val id: Long,
+    val nombre: String,
+    val activo: Boolean = true,
+    val archivadoEn: Instant? = null
+)
+
+/**
+ * Reparto de la inversión entre socios dinámicos (tienda.inventario_inversion).
  *
- * Regla: ambos en 0 (aún sin repartir) o la suma exactamente 100.
- * Para poder VENDER un producto el reparto debe estar definido (suma 100).
+ * Reglas:
+ *  - Cada porcentaje individual está entre 0 y 100.
+ *  - La suma de porcentajes no puede superar 100 %.
+ *  - Para VENDER un artículo el reparto debe ser exactamente 100 % con al menos 1 socio.
  */
 data class ReparteSocios(
-    val pctAntonio: BigDecimal = BigDecimal.ZERO,
-    val pctJavier: BigDecimal = BigDecimal.ZERO
+    val porSocio: Map<Long, BigDecimal> = emptyMap()
 ) {
+    val suma: BigDecimal
+    val sinAsignar: BigDecimal
+    val definida: Boolean
+
     init {
         val cien = BigDecimal(100)
-        require(pctAntonio.signum() >= 0 && pctAntonio <= cien) { "El % de Antonio debe estar entre 0 y 100" }
-        require(pctJavier.signum() >= 0 && pctJavier <= cien) { "El % de Javier debe estar entre 0 y 100" }
-        val suma = pctAntonio + pctJavier
-        require(suma.signum() == 0 || suma.compareTo(cien) == 0) {
-            "Los porcentajes de Antonio y Javier deben sumar 100 (o ambos 0); suman $suma"
+        porSocio.forEach { (socioId, pct) ->
+            require(pct.signum() >= 0 && pct <= cien) {
+                "El % del socio $socioId debe estar entre 0 y 100 (recibido: $pct)"
+            }
         }
+        val total = porSocio.values.fold(BigDecimal.ZERO) { acc, b -> acc + b }
+        require(total <= cien) {
+            "La suma de porcentajes de inversión no puede superar 100 % (suman $total %)"
+        }
+        suma = total
+        sinAsignar = (cien - total).max(BigDecimal.ZERO)
+        definida = total.compareTo(cien) == 0 && porSocio.isNotEmpty()
     }
 
-    /** true si ya se definió el reparto entre socios. */
-    val definida: Boolean get() = (pctAntonio + pctJavier).signum() > 0
+    fun porcentaje(socioId: Long): BigDecimal = porSocio[socioId] ?: BigDecimal.ZERO
 
-    fun porcentaje(socio: Socio): BigDecimal = if (socio == Socio.ANTONIO) pctAntonio else pctJavier
-
-    /** (Antonio, Javier) con la suma exacta; null si el reparto no está definido. */
-    fun repartir(valor: Long): Pair<Long, Long>? = FinancialMath.repartir(valor, pctAntonio, pctJavier)
+    /** Reparte [valor] entre los socios según la proporción asignada (método del mayor residuo). */
+    fun repartir(valor: Long): Map<Long, Long>? = FinancialMath.repartir(valor, porSocio)
 
     companion object {
         val SIN_DEFINIR = ReparteSocios()

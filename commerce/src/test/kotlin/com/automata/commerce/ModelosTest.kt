@@ -14,7 +14,7 @@ import java.time.LocalDate
 class ModelosTest {
 
     private val key = ProductKey("A-0412")
-    private val mitad = ReparteSocios(BigDecimal("50"), BigDecimal("50"))
+    private val mitad = ReparteSocios(mapOf(1L to BigDecimal("50"), 2L to BigDecimal("50")))
 
     // ---------- D3: PM <= PP solo cuando está publicado ----------
 
@@ -111,20 +111,22 @@ class ModelosTest {
     }
 
     @Test
-    fun `ReparteSocios exige suma 100 o ambos en cero`() {
-        ReparteSocios()                                                  // 0 / 0: ok
-        ReparteSocios(BigDecimal("50"), BigDecimal("50"))                // ok
-        ReparteSocios(BigDecimal("33.33"), BigDecimal("66.67"))          // ok
-        assertThrows(IllegalArgumentException::class.java) { ReparteSocios(BigDecimal("60"), BigDecimal("60")) }
-        assertThrows(IllegalArgumentException::class.java) { ReparteSocios(BigDecimal("30"), BigDecimal("30")) }
-        assertThrows(IllegalArgumentException::class.java) { ReparteSocios(BigDecimal("-10"), BigDecimal("110")) }
+    fun `ReparteSocios exige suma menor o igual a 100 y porcentajes validos`() {
+        ReparteSocios()                                                                    // 0 / 0: ok
+        ReparteSocios(mapOf(1L to BigDecimal("50"), 2L to BigDecimal("50")))                // ok
+        ReparteSocios(mapOf(1L to BigDecimal("33.33"), 2L to BigDecimal("66.67")))          // ok
+        ReparteSocios(mapOf(1L to BigDecimal("30"), 2L to BigDecimal("30")))                // suma 60 <= 100: ok
+        assertThrows(IllegalArgumentException::class.java) { ReparteSocios(mapOf(1L to BigDecimal("60"), 2L to BigDecimal("60"))) }
+        assertThrows(IllegalArgumentException::class.java) { ReparteSocios(mapOf(1L to BigDecimal("-10"), 2L to BigDecimal("110"))) }
     }
 
     @Test
     fun `ReparteSocios reparte con suma exacta y sin definir devuelve vacio`() {
-        assertEquals(20_000L to 20_000L, mitad.repartir(40_000))
-        val r = ReparteSocios(BigDecimal("33.33"), BigDecimal("66.67")).repartir(12_345)!!
-        assertEquals(12_345L, r.first + r.second)
+        val ret = mitad.repartir(40_000)!!
+        assertEquals(20_000L, ret[1L])
+        assertEquals(20_000L, ret[2L])
+        val r = ReparteSocios(mapOf(1L to BigDecimal("33.33"), 2L to BigDecimal("66.67"))).repartir(12_345)!!
+        assertEquals(12_345L, r.values.sum())
         assertNull(ReparteSocios.SIN_DEFINIR.repartir(300))
         assertFalse(ReparteSocios.SIN_DEFINIR.definida)
         assertTrue(mitad.definida)

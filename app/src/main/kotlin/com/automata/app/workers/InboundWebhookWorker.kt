@@ -3,6 +3,9 @@ package com.automata.app.workers
 import com.automata.app.pipeline.InboundMessagePipeline
 import com.automata.infra.db.EventosEntrantesTable
 import kotlinx.coroutines.CancellationException
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
@@ -28,14 +31,15 @@ class InboundWebhookWorker(
     private val maxRetries: Int = 3
 ) {
 
-    /** Registra un evento entrante crudo con estado RECIBIDO (idempotente por canal + eventoExternoId). */
-    fun enqueue(canal: String, eventoExternoId: String, payloadJson: String): String = transaction {
+    /** Registra un evento entrante de mensaje con estado RECIBIDO (idempotente por canal + eventoExternoId). */
+    fun enqueue(canal: String, senderId: String, messageId: String, text: String): String = transaction {
         val eventId = "EVT-${UUID.randomUUID()}"
+        val payload = """{"senderId":"${escapeJson(senderId)}","messageId":"${escapeJson(messageId)}","text":"${escapeJson(text)}"}"""
         EventosEntrantesTable.insertIgnore { row ->
             row[EventosEntrantesTable.id] = eventId
             row[EventosEntrantesTable.canal] = canal
-            row[EventosEntrantesTable.eventoExternoId] = eventoExternoId
-            row[EventosEntrantesTable.payload] = payloadJson
+            row[EventosEntrantesTable.eventoExternoId] = messageId
+            row[EventosEntrantesTable.payload] = payload
             row[EventosEntrantesTable.estado] = "RECIBIDO"
             row[EventosEntrantesTable.intentos] = 0
             row[EventosEntrantesTable.creadoEn] = Instant.now()
@@ -66,9 +70,21 @@ class InboundWebhookWorker(
             if (marked == 0) continue
 
             try {
+                var senderId = event.eventoExternoId
+                var messageId = event.eventoExternoId
+                var text = event.payloadJson
+
+                try {
+                    val jsonObj = Json.parseToJsonElement(event.payloadJson).jsonObject
+                    senderId = jsonObj["senderId"]?.jsonPrimitive?.content ?: senderId
+                    messageId = jsonObj["messageId"]?.jsonPrimitive?.content ?: messageId
+                    text = jsonObj["text"]?.jsonPrimitive?.content ?: text
+                } catch (e: Exception) {
+                    // Si el payload es texto simple sin JSON, se procesa tal cual
+                }
+
                 // Pasar al pipeline de mensajes
-                val senderId = event.eventoExternoId
-                pipeline.handle(event.canal, senderId, event.id, event.payloadJson)
+                pipeline.handle(event.canal, senderId, messageId, text)
 
                 transaction {
                     EventosEntrantesTable.update({ EventosEntrantesTable.id eq event.id }) { row ->
@@ -94,6 +110,13 @@ class InboundWebhookWorker(
         }
         return processedCount
     }
+
+    private fun escapeJson(str: String): String =
+        str.replace("\\", "\\\\")
+            .replace("\"", "\\\"")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
 
     private fun ResultRow.toRecord() = InboundEventRecord(
         id = this[EventosEntrantesTable.id],

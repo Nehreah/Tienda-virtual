@@ -30,13 +30,13 @@ class FinancialMathTest {
         val ganancia = FinancialMath.gananciaNeta(Money.of(300), Money.of(220))
         assertEquals(80L, ganancia.amount)
 
-        val retorno = FinancialMath.repartir(300, BigDecimal("50"), BigDecimal("50"))!!
-        assertEquals(150L, retorno.first)
-        assertEquals(150L, retorno.second)
+        val retorno = FinancialMath.repartir(300, mapOf(1L to BigDecimal("50"), 2L to BigDecimal("50")))!!
+        assertEquals(150L, retorno[1L])
+        assertEquals(150L, retorno[2L])
 
-        val gan = FinancialMath.repartir(ganancia.amount, BigDecimal("50"), BigDecimal("50"))!!
-        assertEquals(40L, gan.first)
-        assertEquals(40L, gan.second)
+        val gan = FinancialMath.repartir(ganancia.amount, mapOf(1L to BigDecimal("50"), 2L to BigDecimal("50")))!!
+        assertEquals(40L, gan[1L])
+        assertEquals(40L, gan[2L])
     }
 
     @Test
@@ -79,21 +79,21 @@ class FinancialMathTest {
 
     @Test
     fun `reparto con redondeo siempre suma exacto`() {
-        val r = FinancialMath.repartir(100, BigDecimal("33.33"), BigDecimal("66.67"))!!
-        assertEquals(33L, r.first)
-        assertEquals(67L, r.second)
-        assertEquals(100L, r.first + r.second)
+        val r = FinancialMath.repartir(100, mapOf(1L to BigDecimal("33.33"), 2L to BigDecimal("66.67")))!!
+        assertEquals(33L, r[1L])
+        assertEquals(67L, r[2L])
+        assertEquals(100L, r.values.sum())
     }
 
     @Test
     fun `reparto de una ganancia negativa tambien cuadra`() {
-        val r = FinancialMath.repartir(-201, BigDecimal("50"), BigDecimal("50"))!!
-        assertEquals(-201L, r.first + r.second)
+        val r = FinancialMath.repartir(-201, mapOf(1L to BigDecimal("50"), 2L to BigDecimal("50")))!!
+        assertEquals(-201L, r.values.sum())
     }
 
     @Test
     fun `sin reparto definido devuelve vacio`() {
-        assertNull(FinancialMath.repartir(300, BigDecimal.ZERO, BigDecimal.ZERO))
+        assertNull(FinancialMath.repartir(300, emptyMap()))
         assertNull(FinancialMath.repartir(300, ReparteSocios.SIN_DEFINIR))
     }
 

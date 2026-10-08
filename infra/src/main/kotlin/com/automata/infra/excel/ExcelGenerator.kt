@@ -26,16 +26,23 @@ object ExcelGenerator {
         setCellValue(sanitizeCell(value))
     }
 
-    fun generateWorkbookFromItems(items: List<InventarioItem>, outputStream: OutputStream) {
+    fun generateWorkbookFromItems(
+        items: List<InventarioItem>,
+        outputStream: OutputStream,
+        socios: List<com.automata.commerce.model.Socio> = emptyList()
+    ) {
         val workbook = XSSFWorkbook()
 
         // 1. Hoja Inventario
         val invSheet = workbook.createSheet("Inventario")
-        val invHeaders = listOf(
+        val baseHeaders = listOf(
             "Key", "Item name", "PP", "PM", "Costo", "Ganancia", "ROI/Margen",
             "Estado", "Link", "Fotos", "Marca", "Tipo", "Condición", "cantidad", "ubicación",
             "Descripción AB", "Fecha Compra", "Fecha Venta"
         )
+        val socioHeaders = socios.map { "% ${it.nombre}" }
+        val invHeaders = if (socios.isNotEmpty()) baseHeaders + socioHeaders + "% Suma" else baseHeaders
+
         val hRow = invSheet.createRow(0)
         invHeaders.forEachIndexed { i, h -> hRow.createCell(i).setCellValue(h) }
 
@@ -73,6 +80,17 @@ object ExcelGenerator {
             row.createCell(15).setCellValue(sanitizeCell(item.descripcion ?: ""))
             row.createCell(16).setCellValue(item.fechaCompra?.toString() ?: "")
             row.createCell(17).setCellValue(item.fechaVenta?.toString() ?: "")
+
+            if (socios.isNotEmpty()) {
+                var colIdx = 18
+                socios.forEach { socio ->
+                    val pct = item.reparte.porcentaje(socio.id)
+                    val pctStr = if (pct.signum() > 0) pct.stripTrailingZeros().toPlainString() else ""
+                    row.createCell(colIdx++).setCellValue(pctStr)
+                }
+                val sumaStr = if (item.reparte.suma.signum() > 0) item.reparte.suma.stripTrailingZeros().toPlainString() else ""
+                row.createCell(colIdx).setCellValue(sumaStr)
+            }
         }
 
         // 2. Hoja Config
@@ -95,11 +113,10 @@ object ExcelGenerator {
         workbook.close()
     }
 
-    fun exportToBytes(items: List<InventarioItem>): ByteArray {
+    fun exportToBytes(items: List<InventarioItem>, socios: List<com.automata.commerce.model.Socio> = emptyList()): ByteArray {
         val baos = ByteArrayOutputStream()
-        generateWorkbookFromItems(items, baos)
+        generateWorkbookFromItems(items, baos, socios)
         return baos.toByteArray()
     }
-
 }
 
