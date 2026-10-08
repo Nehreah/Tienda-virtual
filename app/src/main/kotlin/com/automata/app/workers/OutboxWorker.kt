@@ -5,6 +5,7 @@ import com.automata.infra.db.OutboxTable
 import com.automata.infra.db.PublicacionesTable
 import com.automata.shared.PortResult
 import com.automata.shared.ProductKey
+import kotlinx.coroutines.CancellationException
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
@@ -70,7 +71,6 @@ class OutboxWorker(
             if (marked == 0) continue
 
             if (!com.automata.infra.config.AppConfig.channelWriteEnabled) {
-                // F3 + C4: Interruptor de Seguridad de Escritura activo (Modo Solo Lectura)
                 transaction {
                     OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
                         row[OutboxTable.status] = "SKIPPED_READ_ONLY"
@@ -157,6 +157,7 @@ class OutboxWorker(
                     }
                 }
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 val newIntentos = entry.attempts + 1
                 val newStatus = if (newIntentos >= maxRetries) "DEAD" else "FAILED"
                 val retryDelaySec = (10L * newIntentos * newIntentos)

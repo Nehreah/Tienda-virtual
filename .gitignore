@@ -28,7 +28,7 @@ out/
 Thumbs.db
 *.log
 
-# Archivos temporales y respaldos
+# Archivos temporales, Excel y respaldos
 scratch/
 tmp/
-NEGOCIO_backup*.xlsx
+*.xlsx

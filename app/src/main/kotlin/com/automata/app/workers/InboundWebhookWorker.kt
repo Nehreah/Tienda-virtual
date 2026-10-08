@@ -2,6 +2,7 @@ package com.automata.app.workers
 
 import com.automata.app.pipeline.InboundMessagePipeline
 import com.automata.infra.db.EventosEntrantesTable
+import kotlinx.coroutines.CancellationException
 import org.jetbrains.exposed.sql.ResultRow
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.andWhere
@@ -77,6 +78,7 @@ class InboundWebhookWorker(
                 }
                 processedCount++
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 val newIntentos = event.intentos + 1
                 val newStatus = if (newIntentos >= maxRetries) "DEAD" else "FAILED"
                 val retryDelaySec = (10L * newIntentos * newIntentos)

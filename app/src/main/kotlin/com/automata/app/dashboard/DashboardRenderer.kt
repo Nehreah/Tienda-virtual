@@ -3,32 +3,103 @@ package com.automata.app.dashboard
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.ChannelListingStatus
+import java.util.Locale
 
 /**
  * Generador de HTML para el Dashboard Operacional v5.3.
  * Incluye:
  * 1. Monitoreo de APIs e Integraciones (Funcional, Degradado, Deshabilitado).
  * 2. Estado de Chats y Negociaciones por Canal/App (Trato Realizado, Cancelado, Pendiente de Envío, En Negociación).
- * 3. Pantalla / Sección de Métricas estructurada con tarjetas KPI y contenedores para futuras gráficas.
+ * 3. Pantalla / Sección de Métricas calculadas con los datos reales de [chatDeals].
+ *
+ * La interfaz es de una sola página con subpáginas internas (ruteo por hash, sin cambios en el backend):
+ *   #/inicio · #/apis · #/chats · #/catalogo · #/metricas · #/automatizacion
+ *
+ * Soporta modo claro y oscuro (botón en la barra superior, preferencia guardada en el navegador).
  */
 object DashboardRenderer {
+
+    // htmx fijado a una versión exacta y verificado con SRI (Subresource Integrity).
+    private const val HTMX_SRC = "https://unpkg.com/htmx.org@1.9.10"
+    private const val HTMX_SRI = "sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+
+    /** Canales conocidos. Cualquier otro valor se agrupa como "simulador". */
+    private val CHANNEL_LABELS = linkedMapOf(
+        "whatsapp" to "WhatsApp",
+        "instagram" to "Instagram DM",
+        "messenger" to "Messenger",
+        "shopify_webhooks" to "Shopify Order",
+        "simulador" to "Simulador"
+    )
+
+    private const val ICON_HOME = """<path d="M3 11.5 12 4l9 7.5"/><path d="M5 10.5V20h14v-9.5"/>"""
+    private const val ICON_API = """<path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/>"""
+    private const val ICON_CHAT = """<path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>"""
+    private const val ICON_BOX = """<path d="M21 8 12 3 3 8v8l9 5 9-5V8z"/><path d="m3 8 9 5 9-5M12 13v8"/>"""
+    private const val ICON_CHART = """<path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/>"""
+    private const val ICON_SPARK = """<path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8L12 3z"/><path d="m19 16 .7 1.8 1.8.7-1.8.7L19 21l-.7-1.8-1.8-.7 1.8-.7L19 16z"/>"""
+    private const val ICON_SUN = """<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>"""
+    private const val ICON_MOON = """<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>"""
+    private const val ICON_MENU = """<path d="M4 6h16M4 12h16M4 18h16"/>"""
+    private const val ICON_INFO = """<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>"""
 
     fun renderDashboardPage(
         products: List<CommercialProduct>,
         inventoryMap: Map<String, OperationalInventory>,
         channelStatuses: List<ChannelListingStatus>,
         apiIntegrations: List<ApiIntegrationStatus>,
-        chatDeals: List<ChatDealLog>
+        chatDeals: List<ChatDealLog>,
+        csrfToken: String = ""
     ): String {
         val totalProducts = products.size
         val readyForShopify = channelStatuses.count { it.channel == "shopify" && it.isPublished }
         val readyForMeta = channelStatuses.count { it.channel == "meta_catalogo" && it.isPublished }
 
         // Conteo de tratos por estado
+        val totalDeals = chatDeals.size
         val tratosCerrados = chatDeals.count { it.dealState == DealState.TRATO_CERRADO }
         val pendientesEnvio = chatDeals.count { it.dealState == DealState.PENDIENTE_ENVIO }
         val enNegociacion = chatDeals.count { it.dealState == DealState.EN_NEGOCIACION }
         val cancelados = chatDeals.count { it.dealState == DealState.CANCELADO }
+
+        // Salud de integraciones
+        val functionalApis = apiIntegrations.count { it.status == ApiStatus.FUNCIONAL }
+        val degradedApis = apiIntegrations.count { it.status == ApiStatus.DEGRADADO }
+        val disabledApis = apiIntegrations.count { it.status == ApiStatus.DESHABILITADO }
+
+        // Estado global: se deriva de las integraciones reales (antes estaba fijo en "verde").
+        val (globalClass, globalText) = when {
+            apiIntegrations.isEmpty() -> "neutral" to "Sin integraciones registradas"
+            disabledApis > 0 -> "bad" to "$disabledApis integración(es) deshabilitada(s)"
+            degradedApis > 0 -> "warn" to "$degradedApis integración(es) degradada(s)"
+            else -> "ok" to "Todas las integraciones operativas"
+        }
+        val heroHeadline = when (globalClass) {
+            "ok" -> "¡Hola! Tu operación está en marcha. 🚀"
+            "neutral" -> "Conecta tus canales para empezar."
+            else -> "Hay integraciones que requieren atención."
+        }
+
+        // Gamification / onboarding progress: derived only from live dashboard state.
+        val setupStepsCompleted = listOf(
+            totalProducts > 0,
+            readyForShopify > 0,
+            readyForMeta > 0,
+            functionalApis > 0
+        ).count { it }
+        val setupProgress = setupStepsCompleted * 25
+        val operatorLevel = when {
+            setupProgress >= 100 -> 5
+            setupProgress >= 75 -> 4
+            setupProgress >= 50 -> 3
+            setupProgress >= 25 -> 2
+            else -> 1
+        }
+
+        // Token CSRF: se incluye en formularios (campo oculto) y en las peticiones htmx (cabecera).
+        val csrfInput = if (csrfToken.isNotBlank()) {
+            """<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">"""
+        } else ""
 
         // Filas para la tabla de Productos
         val productRowsHtml = products.joinToString("\n") { p ->
@@ -38,839 +109,1281 @@ object DashboardRenderer {
             val shopifyStatus = channelStatuses.find { it.productKey == p.key && it.channel == "shopify" }
             val metaStatus = channelStatuses.find { it.productKey == p.key && it.channel == "meta_catalogo" }
 
+            val inactiveTag = if (!p.isActive) """<span class="badge neutral sm">Inactivo</span>""" else ""
+            val categoryLine = if (p.category.isNotBlank() && p.category != "General") {
+                """<span class="sub">${escapeHtml(p.category)}</span>"""
+            } else ""
+            val stockClass = if (stockVivo > 0) "ok" else "bad"
+            val negativeTag = if (stockVivo < 0) """<span class="badge bad sm">⚠ Stock negativo</span>""" else ""
+            val shopifyBadge = when {
+                !p.isActive -> """<span class="badge neutral sm">No se publica</span>"""
+                shopifyStatus?.isPublished == true -> """<span class="badge ok sm">Activo</span>"""
+                else -> """<span class="badge warn sm">Pendiente</span>"""
+            }
+            val metaBadge = when {
+                !p.isActive -> """<span class="badge neutral sm">No se publica</span>"""
+                metaStatus?.isPublished == true -> """<span class="badge purple sm">CATALOG_ONLY</span>"""
+                else -> """<span class="badge neutral sm">Sin sync</span>"""
+            }
+
             """
-            <tr class="hover:bg-gray-50 border-b transition text-sm">
-                <td class="px-4 py-3 font-mono font-semibold text-indigo-700">${escapeHtml(p.key.value)}</td>
-                <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(p.itemName)}${if (!p.isActive) " <span class='ml-2 px-2 py-0.5 rounded text-[10px] font-bold bg-gray-200 text-gray-700'>INACTIVO</span>" else ""}</td>
-                <td class="px-4 py-3 text-gray-600">
-                    <span class="font-semibold text-gray-800">${escapeHtml(p.brand)}</span>
-                    ${if (p.category.isNotBlank() && p.category != "General") "<br/><span class='text-xs text-gray-400'>" + escapeHtml(p.category) + "</span>" else ""}
-                </td>
-                <td class="px-4 py-3 text-gray-600 text-xs">${escapeHtml(p.condition)}</td>
-                <td class="px-4 py-3 text-gray-600 text-xs font-mono">${escapeHtml(p.location ?: "-")}</td>
-                <td class="px-4 py-3 text-right font-semibold text-gray-900">${p.publishedPrice.formatFormattedCop()}</td>
-                <td class="px-4 py-3 text-center">
-                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-blue-100 text-blue-800">
-                        ${p.masterQuantity} maestro
-                    </span>
-                </td>
-                <td class="px-4 py-3 text-center">
-                    <span class="px-2.5 py-1 text-xs font-semibold rounded-full ${if (stockVivo > 0) "bg-emerald-100 text-emerald-800" else if (stockVivo < 0) "bg-red-200 text-red-900" else "bg-rose-100 text-rose-800"}">
-                        $stockVivo vivo (${reservas} res)
-                    </span>
-                    ${if (stockVivo < 0) "<span class='ml-1 px-2 py-0.5 rounded text-[10px] font-bold bg-red-200 text-red-800'>⚠ STOCK NEGATIVO</span>" else ""}
-                </td>
-                <td class="px-4 py-3 text-center text-xs">
-                    ${if (!p.isActive) "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-semibold'>NO SE PUBLICA</span>" else if (shopifyStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-green-100 text-green-800 font-semibold'>ACTIVO</span>" else "<span class='px-2 py-0.5 rounded bg-yellow-100 text-yellow-800 font-semibold'>PENDIENTE</span>"}
-                </td>
-                <td class="px-4 py-3 text-center text-xs">
-                    ${if (!p.isActive) "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-500 font-semibold'>NO SE PUBLICA</span>" else if (metaStatus?.isPublished == true) "<span class='px-2 py-0.5 rounded bg-purple-100 text-purple-800 font-semibold'>CATALOG_ONLY</span>" else "<span class='px-2 py-0.5 rounded bg-gray-100 text-gray-700 font-semibold'>SIN SYNC</span>"}
-                </td>
+            <tr>
+                <td class="mono key">${escapeHtml(p.key.value)}</td>
+                <td><span class="cell-main">${escapeHtml(p.itemName)}</span> $inactiveTag</td>
+                <td><span class="cell-main">${escapeHtml(p.brand)}</span>$categoryLine</td>
+                <td>${escapeHtml(p.condition)}</td>
+                <td class="mono">${escapeHtml(p.location ?: "-")}</td>
+                <td class="num strong">${p.publishedPrice.formatFormattedCop()}</td>
+                <td class="center"><span class="badge info">${p.masterQuantity} maestro</span></td>
+                <td class="center"><span class="badge $stockClass">$stockVivo vivo ($reservas res)</span> $negativeTag</td>
+                <td class="center">$shopifyBadge</td>
+                <td class="center">$metaBadge</td>
             </tr>
-            """.trimIndent()
-        }
+            """
+        }.ifBlank { emptyRow(10, "Aún no hay productos cargados. Importa tu matriz comercial desde Automatización.") }
 
         // Cards de Estado de APIs
         val apiCardsHtml = apiIntegrations.joinToString("\n") { api ->
-            val statusColor = when (api.status) {
-                ApiStatus.FUNCIONAL -> "bg-emerald-100 text-emerald-800 border-emerald-300"
-                ApiStatus.DEGRADADO -> "bg-amber-100 text-amber-800 border-amber-300"
-                ApiStatus.DESHABILITADO -> "bg-rose-100 text-rose-800 border-rose-300"
+            val statusClass = when (api.status) {
+                ApiStatus.FUNCIONAL -> "ok"
+                ApiStatus.DEGRADADO -> "warn"
+                ApiStatus.DESHABILITADO -> "bad"
             }
-            val dotColor = when (api.status) {
-                ApiStatus.FUNCIONAL -> "bg-emerald-500 animate-pulse"
-                ApiStatus.DEGRADADO -> "bg-amber-500"
-                ApiStatus.DESHABILITADO -> "bg-rose-500"
-            }
+            val dotClass = if (api.status == ApiStatus.FUNCIONAL) "dot pulse" else "dot"
 
             """
-            <div class="bg-white rounded-xl shadow-sm border p-4 hover:shadow-md transition space-y-2">
-                <div class="flex justify-between items-start">
+            <article class="card api-card">
+                <header>
                     <div>
-                        <span class="text-[10px] uppercase font-bold tracking-wider text-gray-400 block">${api.category}</span>
-                        <h4 class="font-bold text-gray-900 text-sm mt-0.5">${escapeHtml(api.name)}</h4>
+                        <span class="muted small">${escapeHtml(api.category.toString())}</span>
+                        <h3>${escapeHtml(api.name)}</h3>
                     </div>
-                    <span class="px-2 py-0.5 text-[11px] font-bold rounded-full border flex items-center space-x-1 $statusColor">
-                        <span class="w-1.5 h-1.5 rounded-full $dotColor mr-1"></span>
-                        ${api.status.name}
-                    </span>
-                </div>
-                <p class="text-xs text-gray-600 leading-snug">${escapeHtml(api.detail)}</p>
-                <div class="text-[10px] text-gray-400 border-t pt-1.5 flex justify-between">
-                    <span>Último check: ${api.lastCheck}</span>
-                    <span class="text-indigo-600 font-semibold">HTTPS / JSON</span>
-                </div>
-            </div>
-            """.trimIndent()
-        }
+                    <span class="badge $statusClass sm"><span class="$dotClass"></span>${api.status.name}</span>
+                </header>
+                <p>${escapeHtml(api.detail)}</p>
+                <footer>
+                    <span>Último check: ${escapeHtml(api.lastCheck.toString())}</span>
+                    <span class="proto">HTTPS / JSON</span>
+                </footer>
+            </article>
+            """
+        }.ifBlank { """<div class="card card-pad empty">No hay integraciones registradas todavía.</div>""" }
 
         // Filas para la tabla de Chats y Tratos
         val chatDealRowsHtml = chatDeals.joinToString("\n") { chat ->
-            val (badgeClass, badgeText) = when (chat.dealState) {
-                DealState.TRATO_CERRADO  -> "bg-emerald-100 text-emerald-800 border-emerald-300" to "✓ ${escapeHtml(chat.dealStateLabel)}"
-                DealState.PENDIENTE_ENVIO -> "bg-blue-100 text-blue-800 border-blue-300" to "📦 ${escapeHtml(chat.dealStateLabel)}"
-                DealState.EN_NEGOCIACION -> "bg-amber-100 text-amber-800 border-amber-300" to "⏳ ${escapeHtml(chat.dealStateLabel)}"
-                DealState.CANCELADO      -> "bg-rose-100 text-rose-800 border-rose-300" to "✕ ${escapeHtml(chat.dealStateLabel)}"
+            val (badgeClass, badgeIcon) = when (chat.dealState) {
+                DealState.TRATO_CERRADO -> "ok" to "✓"
+                DealState.PENDIENTE_ENVIO -> "info" to "📦"
+                DealState.EN_NEGOCIACION -> "warn" to "⏳"
+                DealState.CANCELADO -> "bad" to "✕"
             }
 
-            val channelBadge = when (chat.channel.lowercase()) {
-                "whatsapp"        -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-emerald-50 text-emerald-700 border border-emerald-200'>WhatsApp</span>"
-                "instagram"       -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-pink-50 text-pink-700 border border-pink-200'>Instagram DM</span>"
-                "messenger"       -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-blue-50 text-blue-700 border border-blue-200'>Messenger</span>"
-                "shopify_webhooks" -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-green-50 text-green-700 border border-green-200'>Shopify Order</span>"
-                else              -> "<span class='px-2 py-0.5 rounded text-xs font-semibold bg-purple-50 text-purple-700 border border-purple-200'>Simulador</span>"
-            }
+            val key = channelKey(chat.channel)
+            val channelBadge = """<span class="badge sm ch-$key">${CHANNEL_LABELS.getValue(key)}</span>"""
 
-            // Fase 5.3: botón "Confirmar Pago" para tratos en espera de confirmación manual.
-            val confirmButton = if (chat.dealState == DealState.TRATO_CERRADO) {
-                """<form method="POST" action="/api/confirmar-pago" class="inline">
+            // Fase 5.3: botón "Confirmar pago" para tratos en espera de confirmación manual.
+            // El nombre del cliente va en un atributo data-* (escapado como HTML) y se lee con
+            // dataset desde JS: nunca se concatena dentro de código JavaScript (evita XSS).
+            val confirmForm = if (chat.dealState == DealState.TRATO_CERRADO) {
+                """
+                <form method="POST" action="/api/confirmar-pago" class="inline-form js-confirm-pago" data-customer="${escapeHtml(chat.customer)}">
                     <input type="hidden" name="dealId" value="${escapeHtml(chat.id)}">
-                    <button type="submit"
-                        class="px-2 py-1 text-xs font-semibold rounded bg-indigo-600 text-white hover:bg-indigo-700 transition"
-                        onclick="return confirm('¿Confirmar pago para ${escapeHtml(chat.customer)}?')">
-                        ✔ Confirmar Pago
-                    </button>
-                </form>"""
+                    $csrfInput
+                    <button type="submit" class="btn btn-primary btn-sm">✔ Confirmar pago</button>
+                </form>
+                """
             } else ""
 
             """
-            <tr class="hover:bg-gray-50 border-b transition text-sm chat-row" data-channel="${escapeHtml(chat.channel)}">
-                <td class="px-4 py-3 font-mono text-xs font-semibold text-gray-500">${escapeHtml(chat.id)}</td>
-                <td class="px-4 py-3">$channelBadge</td>
-                <td class="px-4 py-3 font-medium text-gray-900">${escapeHtml(chat.customer)}</td>
-                <td class="px-4 py-3 text-gray-700">${escapeHtml(chat.productName)}</td>
-                <td class="px-4 py-3 text-right font-bold text-gray-900">${escapeHtml(chat.offeredPrice)}</td>
-                <td class="px-4 py-3 text-center">
-                    <span class="px-2.5 py-1 text-xs font-bold rounded-full border inline-block $badgeClass">
-                        $badgeText
-                    </span>
-                    $confirmButton
+            <tr class="chat-row" data-channel="$key">
+                <td class="mono muted">${escapeHtml(chat.id)}</td>
+                <td>$channelBadge</td>
+                <td class="cell-main">${escapeHtml(chat.customer)}</td>
+                <td>${escapeHtml(chat.productName)}</td>
+                <td class="num strong">${escapeHtml(chat.offeredPriceFormatted)}</td>
+                <td class="center">
+                    <div class="deal-state">
+                        <span class="badge $badgeClass">$badgeIcon ${escapeHtml(chat.dealStateLabel)}</span>
+                        $confirmForm
+                    </div>
                 </td>
-                <td class="px-4 py-3 text-right text-xs text-gray-400">${escapeHtml(chat.timestamp)}</td>
+                <td class="num muted small">${escapeHtml(chat.timestamp)}</td>
             </tr>
-            """.trimIndent()
+            """
+        }.ifBlank { emptyRow(7, "Todavía no hay conversaciones registradas.") }
+
+        val channelChipsHtml = CHANNEL_LABELS.entries.joinToString("\n") { (k, label) ->
+            """<button type="button" class="chip" data-filter="$k" aria-pressed="false">$label</button>"""
         }
 
-        return """
-        <!DOCTYPE html>
-        <html lang="es">
-        <head>
-            <meta charset="UTF-8">
-            <meta name="viewport" content="width=device-width, initial-scale=1.0">
-            <title>Tienda Virtual Multicanal, Semiautogestionada</title>
-            <script src="https://cdn.tailwindcss.com"></script>
-            <script src="https://unpkg.com/htmx.org@1.9.10"></script>
-            <style>
-                body { background-color: #030b14; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-                .navy-header { background: linear-gradient(180deg, #061321 0%, #030a12 100%); }
-                .violet-accent { color: #8b7cff; }
-                .bg-violet-accent { background: #7c3aed; }
-                .nav-tab-active { border-bottom: 0 !important; color: #5eead4; font-weight: 700; }
-                .nav-tab-inactive { color: #8ba2b8; }
-                .nav-tab-inactive:hover { color: #d8f7ff; }
+        // ---------- Métricas calculadas con datos reales ----------
+        val closeRate = pct(tratosCerrados, totalDeals)
 
-                /* =========================================================
-                   AUTOMATA / COMMERCE CONTROL — RETROFUTURIST THEME
-                   The existing information architecture is intentionally
-                   preserved. This layer only changes presentation.
-                   ========================================================= */
-                :root {
-                    --rf-bg: #030b14;
-                    --rf-panel: rgba(5, 20, 32, .88);
-                    --rf-panel-2: rgba(7, 27, 42, .82);
-                    --rf-line: rgba(78, 210, 255, .22);
-                    --rf-cyan: #35d9ff;
-                    --rf-cyan-soft: #8deeff;
-                    --rf-green: #32f0b1;
-                    --rf-violet: #8b7cff;
-                    --rf-pink: #ff4fb3;
-                    --rf-amber: #ffb83d;
-                    --rf-red: #ff5575;
-                    --rf-text: #e7f5ff;
-                    --rf-muted: #7892aa;
-                    --rf-mono: "JetBrains Mono", "SFMono-Regular", Consolas, monospace;
-                }
+        val channelStats = CHANNEL_LABELS.keys.map { k ->
+            val deals = chatDeals.filter { channelKey(it.channel) == k }
+            Triple(k, deals.size, deals.count { it.dealState == DealState.TRATO_CERRADO })
+        }.filter { it.second > 0 }
+        val maxChannel = channelStats.maxOfOrNull { it.second } ?: 1
+        val channelBarsHtml = if (channelStats.isEmpty()) {
+            """<div class="empty">Aún no hay conversaciones para graficar.</div>"""
+        } else {
+            channelStats.joinToString("\n") { (k, n, closed) ->
+                """
+                <div class="bar-row">
+                    <div class="bar-label"><span>${CHANNEL_LABELS.getValue(k)}</span><span class="muted">$closed cerrados de <strong>$n</strong></span></div>
+                    <div class="bar-track"><div class="bar-fill" style="width:${n * 100 / maxChannel}%"></div></div>
+                </div>
+                """
+            }
+        }
 
-                * { box-sizing: border-box; }
-                html { background: var(--rf-bg); }
-                body {
-                    color: var(--rf-text) !important;
-                    min-height: 100vh;
-                    background:
-                        radial-gradient(circle at 75% -10%, rgba(0, 209, 255, .10), transparent 30%),
-                        radial-gradient(circle at 20% 20%, rgba(117, 75, 255, .07), transparent 25%),
-                        linear-gradient(rgba(51, 196, 230, .025) 1px, transparent 1px),
-                        linear-gradient(90deg, rgba(51, 196, 230, .025) 1px, transparent 1px),
-                        var(--rf-bg) !important;
-                    background-size: auto, auto, 32px 32px, 32px 32px, auto;
-                }
+        val stateStats = listOf(
+            Triple("Cerrados", tratosCerrados, "ok"),
+            Triple("Pendientes de envío", pendientesEnvio, "info"),
+            Triple("En negociación", enNegociacion, "warn"),
+            Triple("Cancelados", cancelados, "bad")
+        )
+        val stateBarsHtml = if (totalDeals == 0) {
+            """<div class="empty">Aún no hay conversaciones para graficar.</div>"""
+        } else {
+            stateStats.joinToString("\n") { (label, n, cls) ->
+                """
+                <div class="bar-row">
+                    <div class="bar-label"><span>$label</span><span class="muted"><strong>$n</strong> · ${pct(n, totalDeals)}%</span></div>
+                    <div class="bar-track"><div class="bar-fill fill-$cls" style="width:${n * 100 / totalDeals}%"></div></div>
+                </div>
+                """
+            }
+        }
 
-                .navy-header {
-                    position: sticky;
-                    top: 0;
-                    z-index: 50;
-                    min-height: 88px;
-                    padding: 14px 28px 0 !important;
-                    border-bottom: 1px solid rgba(69, 207, 255, .22);
-                    box-shadow: 0 12px 40px rgba(0,0,0,.35);
-                    overflow: hidden;
-                }
-                .navy-header:after {
-                    content: "";
-                    position: absolute;
-                    left: 0;
-                    right: 0;
-                    bottom: 0;
-                    height: 1px;
-                    background: linear-gradient(90deg, transparent, var(--rf-cyan), transparent);
-                    opacity: .7;
-                }
-                .navy-header > div:first-child { max-width: 1600px !important; margin-bottom: 10px !important; }
-                .navy-header > div:last-child {
-                    position: fixed;
-                    left: 0;
-                    top: 88px;
-                    bottom: 0;
-                    z-index: 40;
-                    width: 210px;
-                    max-width: none !important;
-                    margin: 0 !important;
-                    padding: 18px 12px !important;
-                    border-top: 0 !important;
-                    border-right: 1px solid rgba(53,217,255,.18) !important;
-                    background:
-                        linear-gradient(180deg, rgba(5,20,32,.98), rgba(2,10,17,.98));
-                    display: flex;
-                    flex-direction: column;
-                    align-items: stretch;
-                    gap: 7px !important;
-                    box-shadow: 14px 0 35px rgba(0,0,0,.22);
-                }
-                .navy-header > div:last-child:after {
-                    content: "MÁS CANALES\A MÁS CLIENTES\A MÁS VENTAS";
-                    white-space: pre;
-                    position: absolute;
-                    left: 32px;
-                    bottom: 34px;
-                    color: #2e667c;
-                    font: 700 9px/2 var(--rf-mono);
-                    letter-spacing: .08em;
-                    border-top: 1px solid rgba(53,217,255,.14);
-                    padding-top: 12px;
-                }
-                .navy-header h1 { letter-spacing: -.02em; font-size: 1.35rem !important; }
-                .navy-header p { color: #58b8d6 !important; font-family: var(--rf-mono); font-size: 10px !important; }
-                .navy-header .w-9 {
-                    width: 42px !important; height: 42px !important; border-radius: 11px !important;
-                    background: linear-gradient(135deg, #16d8ff, #7c3aed) !important;
-                    box-shadow: 0 0 24px rgba(53,217,255,.25);
-                    font-size: 19px !important;
-                }
-                .navy-header .bg-emerald-900\/60 {
-                    background: rgba(0, 194, 139, .09) !important;
-                    border-color: rgba(50, 240, 177, .40) !important;
-                    color: #6ef7cb !important;
-                    font-family: var(--rf-mono);
-                }
+        val productMetricsHtml = chatDeals
+            .groupBy { it.productName }
+            .entries
+            .sortedByDescending { it.value.size }
+            .joinToString("\n") { (name, deals) ->
+                val total = deals.size
+                val closed = deals.count { it.dealState == DealState.TRATO_CERRADO }
+                val canceled = deals.count { it.dealState == DealState.CANCELADO }
+                """
+                <tr>
+                    <td class="cell-main">${escapeHtml(name)}</td>
+                    <td class="center">$total</td>
+                    <td class="center"><span class="badge ok sm">$closed</span></td>
+                    <td class="center"><span class="badge ${if (canceled > 0) "bad" else "neutral"} sm">$canceled</span></td>
+                    <td class="center strong">${pct(closed, total)}%</td>
+                </tr>
+                """
+            }.ifBlank { emptyRow(5, "Todavía no hay conversaciones para calcular métricas por producto.") }
 
-                /* Sidebar-like navigation */
-                .navy-header .nav-tab-active,
-                .navy-header .nav-tab-inactive {
-                    position: relative;
-                    width: 100%;
-                    min-height: 46px;
-                    padding: 0 15px !important;
-                    justify-content: flex-start;
-                    border-radius: 8px !important;
-                    transition: .2s ease;
-                    text-align: left;
-                }
-                .navy-header .nav-tab-active { background: linear-gradient(90deg, rgba(42,213,201,.16), rgba(42,213,201,.035)) !important; }
-                .navy-header .nav-tab-active:after {
-                    content: "";
-                    position: absolute;
-                    left: 0; top: 6px; bottom: 6px;
-                    width: 3px;
-                    background: linear-gradient(180deg, var(--rf-green), var(--rf-cyan));
-                    box-shadow: 0 0 14px rgba(53,217,255,.65);
-                    border-radius: 0 4px 4px 0;
-                }
-                .navy-header .nav-tab-inactive:hover { background: rgba(53,217,255,.05); }
+        return """<!DOCTYPE html>
+<html lang="es" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="color-scheme" content="dark light">
+    <meta name="csrf-token" content="${escapeHtml(csrfToken)}">
+    <title>Tienda Virtual Multicanal · Commerce Control</title>
+    <script>
+        /* Aplica el tema antes de pintar para evitar el parpadeo claro/oscuro. */
+        (function () {
+            var t = null;
+            try { t = localStorage.getItem('theme'); } catch (e) {}
+            if (t !== 'light' && t !== 'dark') {
+                t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+            }
+            document.documentElement.setAttribute('data-theme', t);
+        })();
+    </script>
+    <script src="$HTMX_SRC" integrity="$HTMX_SRI" crossorigin="anonymous" defer></script>
+    <style>
+        /* ================= Tokens ================= */
+        :root {
+            color-scheme: dark;
+            --font: Inter, "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, Roboto, "Helvetica Neue", Arial, sans-serif;
+            --mono: "JetBrains Mono", "SFMono-Regular", ui-monospace, Consolas, monospace;
+            --r: 16px;
 
-                main.max-w-7xl {
-                    max-width: 1450px !important;
-                    width: calc(100% - 210px);
-                    margin-left: 210px !important;
-                    margin-right: auto !important;
-                    padding-top: 28px !important;
-                    padding-bottom: 56px !important;
-                }
-                main { position: relative; }
+            --bg: #070b1a;
+            --side-bg: #0a1126;
+            --topbar-bg: rgba(7, 11, 26, .78);
+            --surface: #0f1730;
+            --surface-2: #141e3d;
+            --hover: rgba(117, 103, 255, .07);
+            --border: rgba(133, 156, 255, .16);
+            --text: #eef2ff;
+            --text-2: #b0bbd6;
+            --muted: #8190b0;
+            --primary: #7567ff;
+            --primary-2: #9b5cff;
+            --primary-soft: rgba(117, 103, 255, .18);
+            --primary-fg: #c4beff;
+            --shadow: 0 10px 28px rgba(0, 0, 0, .28);
 
-                /* Universal panel language */
-                main .bg-white,
-                main .bg-gray-50,
-                main .bg-gray-100 {
-                    color: var(--rf-text) !important;
-                    background: linear-gradient(145deg, rgba(7,25,39,.94), rgba(3,14,24,.96)) !important;
-                    border-color: var(--rf-line) !important;
-                }
-                main .bg-white { box-shadow: 0 14px 35px rgba(0,0,0,.22), inset 0 1px 0 rgba(255,255,255,.025) !important; }
-                main .rounded-xl { border-radius: 14px !important; }
-                main .rounded-lg { border-radius: 10px !important; }
-                main .border-gray-200, main .border-gray-300 { border-color: rgba(79, 179, 221, .18) !important; }
-                main .border-b { border-color: rgba(79, 179, 221, .15) !important; }
+            --ok-bg: rgba(53, 224, 174, .12);   --ok-fg: #5eeac0;   --ok-bd: rgba(53, 224, 174, .30);
+            --warn-bg: rgba(255, 200, 87, .12); --warn-fg: #ffd47a; --warn-bd: rgba(255, 200, 87, .30);
+            --bad-bg: rgba(255, 102, 133, .12); --bad-fg: #ff8fa6;  --bad-bd: rgba(255, 102, 133, .32);
+            --info-bg: rgba(56, 217, 255, .11); --info-fg: #6fe0ff; --info-bd: rgba(56, 217, 255, .28);
+            --purple-bg: rgba(155, 92, 255, .15); --purple-fg: #c9aaff; --purple-bd: rgba(155, 92, 255, .32);
+            --pink-bg: rgba(255, 85, 173, .12); --pink-fg: #ff8cc6; --pink-bd: rgba(255, 85, 173, .30);
+            --neutral-bg: rgba(145, 160, 191, .12); --neutral-fg: #b0bbd6; --neutral-bd: rgba(145, 160, 191, .26);
+        }
 
-                main h2, main h3, main h4 { color: #e8f7ff !important; }
-                main p, main td { color: #9cb3c5 !important; }
-                main .text-gray-900, main .text-gray-800 { color: #e7f5ff !important; }
-                main .text-gray-700, main .text-gray-600 { color: #9cb3c5 !important; }
-                main .text-gray-500, main .text-gray-400 { color: #668197 !important; }
-                main .font-mono { font-family: var(--rf-mono) !important; }
+        :root[data-theme="light"] {
+            color-scheme: light;
+            --bg: #f3f5fb;
+            --side-bg: #ffffff;
+            --topbar-bg: rgba(243, 245, 251, .85);
+            --surface: #ffffff;
+            --surface-2: #f6f7fc;
+            --hover: rgba(91, 75, 232, .06);
+            --border: #e1e5f1;
+            --text: #131a33;
+            --text-2: #43506e;
+            --muted: #66718f;
+            --primary: #5b4be8;
+            --primary-2: #8a4fe0;
+            --primary-soft: #ece9ff;
+            --primary-fg: #4a3bd0;
+            --shadow: 0 6px 20px rgba(30, 40, 90, .07);
 
-                /* KPI cards */
-                #tab-ops > div:first-child > div {
-                    position: relative;
-                    overflow: hidden;
-                    min-height: 144px;
-                    border: 1px solid rgba(53,217,255,.28) !important;
-                    background:
-                        linear-gradient(135deg, rgba(8,31,49,.95), rgba(3,15,26,.98)) !important;
-                }
-                #tab-ops > div:first-child > div:before {
-                    content: "";
-                    position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
-                    background: linear-gradient(180deg, var(--rf-cyan), transparent);
-                    box-shadow: 0 0 16px rgba(53,217,255,.45);
-                }
-                #tab-ops > div:first-child > div:nth-child(2):before { background: linear-gradient(180deg, var(--rf-green), transparent); }
-                #tab-ops > div:first-child > div:nth-child(3):before { background: linear-gradient(180deg, var(--rf-violet), transparent); }
-                #tab-ops > div:first-child > div:nth-child(4):before { background: linear-gradient(180deg, var(--rf-cyan), transparent); }
-                #tab-ops > div:first-child h3 { font-size: 2.15rem !important; line-height: 1.1; }
-                #tab-ops > div:first-child p:first-child { color: #68a4bf !important; letter-spacing: .12em; font-family: var(--rf-mono); }
-                #tab-ops > div:first-child p:last-child { color: #54cfe5 !important; }
+            --ok-bg: #e3f8ef;   --ok-fg: #0b7a57;   --ok-bd: #b4e9d1;
+            --warn-bg: #fff4dc; --warn-fg: #8a5a00; --warn-bd: #f1d9a0;
+            --bad-bg: #ffe8ed;  --bad-fg: #b4223f;  --bad-bd: #f5bfca;
+            --info-bg: #e2f5fc; --info-fg: #0a6585; --info-bd: #b3e1f1;
+            --purple-bg: #f0e8ff; --purple-fg: #6a35c4; --purple-bd: #d8c6f6;
+            --pink-bg: #ffe8f3; --pink-fg: #b1226c; --pink-bd: #f6c0dc;
+            --neutral-bg: #eef0f6; --neutral-fg: #43506e; --neutral-bd: #dce0ec;
+        }
 
-                /* API section */
-                #tab-ops > div:nth-child(2) { position: relative; }
-                #tab-ops > div:nth-child(2) > div:first-child h3 { letter-spacing: -.01em; }
-                #tab-ops > div:nth-child(2) > div:first-child span {
-                    background: rgba(91,78,255,.10) !important;
-                    color: #b4aaff !important;
-                    border-color: rgba(139,124,255,.45) !important;
-                    font-family: var(--rf-mono);
-                }
-                #tab-ops > div:nth-child(2) > div:last-child > div {
-                    position: relative;
-                    min-height: 142px;
-                    border: 1px solid rgba(53,217,255,.25) !important;
-                    background: linear-gradient(145deg, rgba(6,26,41,.96), rgba(3,15,25,.98)) !important;
-                    box-shadow: inset 0 0 30px rgba(53,217,255,.025), 0 12px 25px rgba(0,0,0,.18) !important;
-                }
-                #tab-ops > div:nth-child(2) > div:last-child > div:hover { border-color: rgba(53,217,255,.55) !important; transform: translateY(-2px); }
-                #tab-ops > div:nth-child(2) > div:last-child > div > div:first-child span:last-child {
-                    background: rgba(255,65,105,.08) !important;
-                    color: #ff7090 !important;
-                    border-color: rgba(255,85,117,.60) !important;
-                }
-                #tab-ops > div:nth-child(2) > div:last-child > div > div:last-child { border-color: rgba(77,174,212,.18) !important; }
+        /* ================= Base ================= */
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: var(--bg);
+            color: var(--text);
+            font: 14px/1.5 var(--font);
+            -webkit-font-smoothing: antialiased;
+        }
+        [hidden] { display: none !important; }
+        h1, h2, h3, h4, p { margin: 0; }
+        a { color: inherit; text-decoration: none; }
+        button { font: inherit; cursor: pointer; }
+        :focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+        .muted { color: var(--muted); }
+        .small { font-size: 12px; }
+        .mono { font-family: var(--mono); font-size: 12px; }
+        .strong { color: var(--text); font-weight: 600; }
+        .ic { width: 18px; height: 18px; flex: 0 0 18px; }
 
-                /* Chat panel */
-                #tab-ops > div:nth-child(3) { overflow: hidden; }
-                #tab-ops > div:nth-child(3) .bg-emerald-50,
-                #tab-ops > div:nth-child(3) .bg-blue-50,
-                #tab-ops > div:nth-child(3) .bg-amber-50,
-                #tab-ops > div:nth-child(3) .bg-rose-50,
-                #tab-ops > div:nth-child(3) .bg-gray-100 {
-                    background: rgba(53,217,255,.045) !important;
-                    border-color: rgba(53,217,255,.18) !important;
-                    color: #9bd7e8 !important;
-                }
-                table { color: #c9dce8 !important; }
-                thead tr { background: rgba(53,217,255,.045) !important; }
-                th { color: #6fa4bc !important; letter-spacing: .08em; font-size: 10px !important; }
-                tbody tr { border-color: rgba(77,174,212,.12) !important; }
-                tbody tr:hover { background: rgba(53,217,255,.035) !important; }
+        /* ================= Layout (grid, sin posiciones superpuestas) ================= */
+        .app { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
 
-                /* Forms / controls */
-                input, select, textarea {
-                    background: rgba(1,10,18,.85) !important;
-                    color: #e7f5ff !important;
-                    border-color: rgba(79,179,221,.24) !important;
-                }
-                input::placeholder { color: #557185 !important; }
-                input:focus { border-color: var(--rf-cyan) !important; box-shadow: 0 0 0 2px rgba(53,217,255,.10) !important; }
-                button.bg-violet-accent, button.bg-indigo-600, button.bg-emerald-600 {
-                    background: linear-gradient(135deg, #0a91b8, #6248dc) !important;
-                    box-shadow: 0 0 18px rgba(82,122,255,.16);
-                }
-                button.bg-emerald-600 { background: linear-gradient(135deg, #087f71, #0ecb9b) !important; }
+        .sidebar {
+            position: sticky; top: 0;
+            height: 100vh;
+            display: flex; flex-direction: column;
+            padding: 20px 14px;
+            background: var(--side-bg);
+            border-right: 1px solid var(--border);
+        }
+        .brand { display: flex; align-items: center; gap: 12px; padding: 4px 8px 22px; }
+        .brand-logo {
+            width: 40px; height: 40px; flex: 0 0 40px;
+            display: grid; place-items: center;
+            border-radius: 12px; color: #fff; font-weight: 800; font-size: 18px;
+            background: linear-gradient(135deg, #28d9ff 0%, #7157ff 55%, #a249ff 100%);
+        }
+        .brand-name { font-weight: 800; font-size: 15px; line-height: 1.2; }
+        .brand-sub { color: var(--muted); font-size: 12px; }
 
-                /* Dashed import/simulation areas */
-                .border-dashed {
-                    background: rgba(53,217,255,.025) !important;
-                    border-color: rgba(53,217,255,.22) !important;
-                }
+        .nav { display: flex; flex-direction: column; gap: 4px; }
+        .nav a {
+            position: relative;
+            display: flex; align-items: center; gap: 12px;
+            height: 42px; padding: 0 12px;
+            border-radius: 10px;
+            color: var(--muted); font-weight: 500;
+            transition: background .15s, color .15s;
+        }
+        .nav a:hover { background: var(--hover); color: var(--text); }
+        .nav a[aria-current="page"] { background: var(--primary-soft); color: var(--text); font-weight: 600; }
+        .nav a[aria-current="page"]::before {
+            content: ""; position: absolute; left: -14px; top: 9px; bottom: 9px; width: 3px;
+            border-radius: 0 3px 3px 0; background: var(--primary);
+        }
+        .nav a[aria-current="page"] .ic { color: var(--primary); }
 
-                /* Metrics tab */
-                #tab-metrics .bg-indigo-50, #tab-metrics .bg-purple-50 { background: rgba(100,90,255,.08) !important; }
-                #tab-metrics .text-indigo-700, #tab-metrics .text-purple-700 { color: #9c91ff !important; }
-                #tab-metrics .border-indigo-200, #tab-metrics .border-purple-200 { border-color: rgba(139,124,255,.35) !important; }
+        .side-foot {
+            margin-top: auto; padding: 14px 8px 0;
+            border-top: 1px solid var(--border);
+            color: var(--muted); font-size: 12px; line-height: 1.6;
+        }
 
-                /* Subtle HUD corner treatment */
-                main .bg-white { position: relative; }
-                main .bg-white:after {
-                    content: "";
-                    position: absolute;
-                    top: 0; right: 0;
-                    width: 70px; height: 1px;
-                    background: linear-gradient(90deg, transparent, rgba(53,217,255,.6));
-                    pointer-events: none;
-                }
+        .main { min-width: 0; display: flex; flex-direction: column; }
+        .topbar {
+            position: sticky; top: 0; z-index: 30;
+            display: flex; align-items: center; gap: 12px;
+            height: 64px; padding: 0 28px;
+            background: var(--topbar-bg);
+            -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+            border-bottom: 1px solid var(--border);
+        }
+        .topbar h1 { font-size: 18px; font-weight: 800; letter-spacing: -.01em; }
+        .spacer { flex: 1; }
+        .btn.menu-btn { display: none; }
+        .scrim { display: none; }
 
-                @media (max-width: 900px) {
-                    .navy-header { padding-left: 16px !important; padding-right: 16px !important; }
-                    .navy-header > div:first-child h1 { font-size: 1.05rem !important; }
-                    .navy-header > div:last-child {
-                        position: static;
-                        width: 100%;
-                        height: auto;
-                        min-height: 42px;
-                        flex-direction: row;
-                        overflow-x: auto;
-                        border-right: 0 !important;
-                        background: transparent;
-                        box-shadow: none;
-                        padding: 6px 0 !important;
-                    }
-                    .navy-header > div:last-child:after { display: none; }
-                    .navy-header .nav-tab-active, .navy-header .nav-tab-inactive { width: auto; white-space: nowrap; }
-                    main.max-w-7xl { width: 100%; margin-left: 0 !important; padding-left: 14px !important; padding-right: 14px !important; }
-                }
-                @media (max-width: 640px) {
-                    .navy-header > div:first-child { align-items: flex-start; }
-                    .navy-header .bg-emerald-900\/60 { display: none; }
-                    .navy-header > div:last-child { overflow-x: auto; }
-                    .navy-header .nav-tab-active, .navy-header .nav-tab-inactive { white-space: nowrap; }
-                }
-            </style>
-        </head>
-        <body class="text-gray-800">
+        .content { width: 100%; max-width: 1400px; margin: 0 auto; padding: 28px; }
+        .view { display: flex; flex-direction: column; gap: 22px; }
 
-            <!-- =====================================================
-                 AUTOMATA / COMMERCE CONTROL — SYSTEM HEADER
-                 ===================================================== -->
-            <header class="navy-header text-white px-6 pt-4 pb-0 shadow-md">
-                <div class="max-w-7xl mx-auto flex justify-between items-center mb-4">
-                    <div class="flex items-center space-x-3">
-                        <div class="w-9 h-9 rounded-lg bg-violet-accent flex items-center justify-center font-bold text-white text-lg shadow">A</div>
+        /* ================= Componentes ================= */
+        .card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); box-shadow: var(--shadow); }
+        .card-pad { padding: 22px; }
+        .card-head {
+            display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;
+            padding: 18px 22px; border-bottom: 1px solid var(--border);
+        }
+        .card-head h3 { font-size: 16px; font-weight: 700; }
+        .card-head p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+        .page-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+        .page-head h2 { font-size: 22px; font-weight: 800; letter-spacing: -.015em; }
+        .page-head p { color: var(--muted); margin-top: 2px; }
+
+        .cols-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(340px, 100%), 1fr)); gap: 20px; }
+        .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(230px, 100%), 1fr)); gap: 16px; }
+        .kpi { padding: 20px; }
+        .kpi .label { color: var(--muted); font-size: 13px; font-weight: 600; }
+        .kpi .value { font-size: 28px; font-weight: 800; letter-spacing: -.02em; line-height: 1.15; margin-top: 8px; }
+        .kpi .value small { font-size: 14px; font-weight: 500; color: var(--muted); }
+        .kpi .hint { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+        .v-ok { color: var(--ok-fg); } .v-purple { color: var(--purple-fg); } .v-primary { color: var(--primary-fg); } .v-info { color: var(--info-fg); }
+
+        /* Badges y estados */
+        .ok      { --c-bg: var(--ok-bg);      --c-fg: var(--ok-fg);      --c-bd: var(--ok-bd); }
+        .warn    { --c-bg: var(--warn-bg);    --c-fg: var(--warn-fg);    --c-bd: var(--warn-bd); }
+        .bad     { --c-bg: var(--bad-bg);     --c-fg: var(--bad-fg);     --c-bd: var(--bad-bd); }
+        .info    { --c-bg: var(--info-bg);    --c-fg: var(--info-fg);    --c-bd: var(--info-bd); }
+        .purple  { --c-bg: var(--purple-bg);  --c-fg: var(--purple-fg);  --c-bd: var(--purple-bd); }
+        .pink    { --c-bg: var(--pink-bg);    --c-fg: var(--pink-fg);    --c-bd: var(--pink-bd); }
+        .neutral { --c-bg: var(--neutral-bg); --c-fg: var(--neutral-fg); --c-bd: var(--neutral-bd); }
+        .ch-whatsapp, .ch-shopify_webhooks { --c-bg: var(--ok-bg); --c-fg: var(--ok-fg); --c-bd: var(--ok-bd); }
+        .ch-instagram { --c-bg: var(--pink-bg); --c-fg: var(--pink-fg); --c-bd: var(--pink-bd); }
+        .ch-messenger { --c-bg: var(--info-bg); --c-fg: var(--info-fg); --c-bd: var(--info-bd); }
+        .ch-simulador { --c-bg: var(--purple-bg); --c-fg: var(--purple-fg); --c-bd: var(--purple-bd); }
+
+        .badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 4px 11px; border-radius: 999px;
+            border: 1px solid var(--c-bd, var(--neutral-bd));
+            background: var(--c-bg, var(--neutral-bg));
+            color: var(--c-fg, var(--neutral-fg));
+            font-size: 12.5px; font-weight: 600; line-height: 1.3; white-space: nowrap;
+        }
+        .badge.sm { padding: 2px 9px; font-size: 12px; }
+        .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+        .dot.pulse { animation: pulse 2s ease-in-out infinite; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+
+        /* Botones, chips e inputs */
+        .btn {
+            display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+            height: 40px; padding: 0 16px;
+            border-radius: 10px; border: 1px solid var(--border);
+            background: var(--surface-2); color: var(--text); font-weight: 600;
+            transition: filter .15s, border-color .15s, background .15s;
+        }
+        .btn:hover { border-color: var(--primary); }
+        .btn-primary { border-color: transparent; color: #fff; background: linear-gradient(135deg, var(--primary), var(--primary-2)); }
+        .btn-primary:hover { filter: brightness(1.1); border-color: transparent; }
+        .btn-ok { border-color: transparent; color: #fff; background: linear-gradient(135deg, #14a07a, #2fcf9f); }
+        .btn-ok:hover { filter: brightness(1.08); border-color: transparent; }
+        .btn-sm { height: 30px; padding: 0 12px; font-size: 12.5px; border-radius: 8px; }
+        .btn-block { width: 100%; }
+        .icon-btn { width: 40px; padding: 0; }
+
+        .chips { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+        .chip {
+            padding: 6px 14px; border-radius: 999px;
+            border: 1px solid var(--border); background: var(--surface-2); color: var(--text-2);
+            font-size: 13px; font-weight: 600;
+            transition: border-color .15s, background .15s;
+        }
+        .chip:hover { border-color: var(--primary); }
+        .chip.active { background: var(--primary); border-color: var(--primary); color: #fff; }
+
+        .input {
+            flex: 1; min-width: 0; height: 40px; padding: 0 12px;
+            border-radius: 10px; border: 1px solid var(--border);
+            background: var(--bg); color: var(--text); font: inherit;
+        }
+        .input::placeholder { color: var(--muted); }
+        .input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-soft); }
+        .form-row { display: flex; gap: 10px; }
+        .stack { display: flex; flex-direction: column; gap: 16px; }
+
+        .dropzone { padding: 22px; text-align: center; border: 2px dashed var(--border); border-radius: 12px; background: var(--surface-2); }
+        .dropzone input[type="file"] { width: 100%; color: var(--muted); font: inherit; }
+        .dropzone input[type="file"]::file-selector-button {
+            margin-right: 12px; padding: 8px 16px; border: 0; border-radius: 999px;
+            background: var(--primary-soft); color: var(--primary-fg); font-weight: 600; cursor: pointer;
+        }
+        .dropzone p { margin-top: 10px; color: var(--muted); font-size: 13px; }
+        .console {
+            min-height: 120px; padding: 14px; border-radius: 12px;
+            background: var(--bg); border: 1px solid var(--border);
+            font-family: var(--mono); font-size: 13px; color: var(--text-2);
+        }
+
+        /* Tablas */
+        .table-wrap { overflow-x: auto; }
+        table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+        th {
+            padding: 12px 16px; text-align: left; white-space: nowrap;
+            font-size: 12.5px; font-weight: 600; color: var(--muted);
+            background: var(--surface-2); border-bottom: 1px solid var(--border);
+        }
+        td { padding: 13px 16px; color: var(--text-2); vertical-align: middle; border-bottom: 1px solid var(--border); }
+        tbody tr:last-child td { border-bottom: 0; }
+        tbody tr:hover { background: var(--hover); }
+        .num { text-align: right; } .center { text-align: center; }
+        td.key { color: var(--primary-fg); font-weight: 600; }
+        .cell-main { color: var(--text); font-weight: 600; }
+        .sub { display: block; color: var(--muted); font-size: 12px; }
+        .deal-state { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+        .inline-form { display: inline; margin: 0; }
+        .empty { padding: 28px; text-align: center; color: var(--muted); }
+        td.empty { padding: 36px 16px; }
+
+        /* Hero de inicio */
+        .hero {
+            display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(300px, 1fr); gap: 28px;
+            padding: 28px; align-items: center;
+        }
+        .hero h2 { font-size: clamp(24px, 3vw, 32px); line-height: 1.15; letter-spacing: -.02em; font-weight: 800; }
+        .hero p { color: var(--text-2); max-width: 56ch; margin-top: 10px; }
+        .achievements { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+        .level-card { padding: 18px; border-radius: 12px; background: var(--surface-2); border: 1px solid var(--border); }
+        .level-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 12px; }
+        .level-row .t1 { color: var(--muted); font-size: 13px; font-weight: 600; }
+        .level-row .t2 { font-size: 18px; font-weight: 800; margin-top: 2px; }
+        .progress-track, .bar-track { height: 10px; border-radius: 99px; overflow: hidden; background: var(--bg); border: 1px solid var(--border); }
+        .progress-fill { height: 100%; border-radius: inherit; background: linear-gradient(90deg, #36d9ff, #7567ff, #b05aff); }
+        .quest-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 14px; }
+        .quest { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 9px; background: var(--bg); color: var(--muted); font-size: 13px; }
+        .quest-dot { width: 8px; height: 8px; flex: 0 0 8px; border-radius: 50%; background: var(--neutral-bd); }
+        .quest.done { color: var(--ok-fg); background: var(--ok-bg); }
+        .quest.done .quest-dot { background: var(--ok-fg); }
+
+        .summary-card { display: flex; flex-direction: column; align-items: flex-start; }
+        .summary-card .btn { margin-top: auto; }
+        .summary-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 18px; }
+        .card-pad > h3 { font-size: 16px; font-weight: 700; }
+        .card-pad > p { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+        /* APIs */
+        .api-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(270px, 100%), 1fr)); gap: 16px; }
+        .api-card { padding: 18px; display: flex; flex-direction: column; gap: 12px; }
+        .api-card header { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
+        .api-card h3 { font-size: 15px; font-weight: 700; margin-top: 2px; }
+        .api-card p { flex: 1; color: var(--text-2); font-size: 13px; }
+        .api-card footer { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding-top: 10px; border-top: 1px solid var(--border); color: var(--muted); font-size: 12px; }
+        .api-card .proto { color: var(--primary-fg); font-weight: 600; }
+
+        /* Barras de métricas */
+        .bar-row + .bar-row { margin-top: 18px; }
+        .bar-label { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 13.5px; color: var(--text); }
+        .bar-fill { height: 100%; border-radius: inherit; background: var(--primary); }
+        .fill-ok { background: var(--ok-fg); } .fill-info { background: var(--info-fg); }
+        .fill-warn { background: var(--warn-fg); } .fill-bad { background: var(--bad-fg); }
+        .notice { display: flex; gap: 12px; align-items: flex-start; padding: 16px 18px; color: var(--text-2); }
+        .notice .ic { color: var(--info-fg); margin-top: 2px; }
+
+        /* ================= Responsive ================= */
+        @media (max-width: 1000px) {
+            .hero { grid-template-columns: 1fr; }
+        }
+        @media (max-width: 900px) {
+            .app { grid-template-columns: minmax(0, 1fr); }
+            .sidebar {
+                position: fixed; top: 0; bottom: 0; left: 0; z-index: 50;
+                width: 264px; height: auto;
+                transform: translateX(-104%);
+                transition: transform .22s ease;
+            }
+            body.nav-open .sidebar { transform: none; box-shadow: 18px 0 50px rgba(0, 0, 0, .35); }
+            body.nav-open .scrim { display: block; position: fixed; inset: 0; z-index: 40; background: rgba(0, 0, 0, .5); }
+            .btn.menu-btn { display: inline-flex; }
+            .topbar { padding: 0 16px; }
+            .content { padding: 20px 14px 56px; }
+        }
+        @media (max-width: 640px) {
+            .status-text { display: none; }
+            .hero { padding: 20px; }
+        }
+        @media (max-width: 480px) {
+            .quest-list { grid-template-columns: 1fr; }
+            .form-row { flex-direction: column; }
+        }
+
+        /* Botón de tema: muestra el sol en oscuro y la luna en claro */
+        :root[data-theme="dark"] .ic-moon { display: none; }
+        :root[data-theme="light"] .ic-sun { display: none; }
+
+        @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
+        }
+
+        /* =========================================================
+           PREMIUM VISUAL REFRESH · inspirado en el diseño de referencia
+           ========================================================= */
+        :root {
+            --glow-purple: rgba(117, 103, 255, .28);
+            --glow-blue: rgba(56, 217, 255, .20);
+            --glow-pink: rgba(255, 85, 173, .18);
+        }
+
+        body {
+            background:
+                radial-gradient(circle at 88% 3%, rgba(117,103,255,.085), transparent 25%),
+                radial-gradient(circle at 12% 95%, rgba(56,217,255,.045), transparent 24%),
+                var(--bg);
+        }
+
+        .sidebar {
+            background:
+                radial-gradient(circle at 20% 4%, rgba(117,103,255,.09), transparent 25%),
+                var(--side-bg);
+        }
+
+        .brand-logo {
+            box-shadow: 0 8px 28px rgba(117,103,255,.25);
+        }
+
+        .nav a {
+            border: 1px solid transparent;
+            transition: background .18s ease, color .18s ease, border-color .18s ease, transform .18s ease;
+        }
+
+        .nav a:hover {
+            border-color: rgba(117,103,255,.10);
+            transform: translateX(1px);
+        }
+
+        .nav a[aria-current="page"] {
+            border-color: rgba(117,103,255,.15);
+            box-shadow: 0 6px 22px rgba(117,103,255,.07);
+        }
+
+        .nav a[aria-current="page"]::before {
+            box-shadow: 0 0 12px rgba(117,103,255,.35);
+        }
+
+        .nav-icon {
+            width: 28px;
+            height: 28px;
+            flex: 0 0 28px;
+            display: grid;
+            place-items: center;
+            border-radius: 9px;
+            color: var(--muted);
+            background: rgba(117,103,255,.055);
+            border: 1px solid rgba(117,103,255,.08);
+            transition: color .18s ease, background .18s ease, transform .18s ease, box-shadow .18s ease;
+        }
+
+        .nav-icon .ic {
+            width: 16px;
+            height: 16px;
+        }
+
+        .nav a:hover .nav-icon {
+            color: var(--primary-fg);
+            background: rgba(117,103,255,.12);
+            transform: scale(1.04);
+        }
+
+        .nav a[aria-current="page"] .nav-icon {
+            color: #fff;
+            background: linear-gradient(135deg, var(--primary), var(--primary-2));
+            border-color: transparent;
+            box-shadow: 0 5px 16px rgba(117,103,255,.24);
+        }
+
+        .topbar {
+            background:
+                linear-gradient(90deg, rgba(7,11,26,.92), rgba(10,13,35,.72));
+            border-bottom-color: rgba(133,156,255,.12);
+        }
+
+        :root[data-theme="light"] .topbar {
+            background: rgba(243,245,251,.86);
+        }
+
+        .card {
+            position: relative;
+            overflow: hidden;
+            background:
+                linear-gradient(145deg, rgba(255,255,255,.035), rgba(255,255,255,.012)),
+                var(--surface);
+            border-color: rgba(145,155,255,.17);
+            box-shadow: 0 10px 35px rgba(0,0,0,.20), inset 0 1px 0 rgba(255,255,255,.025);
+            transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+        }
+
+        .card:hover {
+            border-color: rgba(145,155,255,.28);
+            box-shadow: 0 15px 45px rgba(0,0,0,.25), 0 0 30px rgba(117,103,255,.045);
+        }
+
+        :root[data-theme="light"] .card {
+            background: linear-gradient(145deg, rgba(255,255,255,1), rgba(249,250,255,.96));
+            border-color: var(--border);
+            box-shadow: var(--shadow);
+        }
+
+        .kpis {
+            grid-template-columns: repeat(4, minmax(0, 1fr));
+            gap: 12px;
+        }
+
+        .kpi {
+            min-height: 132px;
+            padding: 18px 20px;
+            isolation: isolate;
+        }
+
+        .kpi::after {
+            content: "";
+            position: absolute;
+            width: 112px;
+            height: 112px;
+            right: -42px;
+            bottom: -52px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(117,103,255,.20) 0%, rgba(117,103,255,.08) 45%, transparent 72%);
+            border: 1px solid rgba(117,103,255,.10);
+            z-index: -1;
+        }
+
+        .kpi::before {
+            content: "";
+            position: absolute;
+            width: 76px;
+            height: 76px;
+            right: -27px;
+            bottom: -36px;
+            border-radius: 50%;
+            border: 1px solid rgba(117,103,255,.09);
+            z-index: -1;
+        }
+
+        .kpi:nth-child(2)::after {
+            background: radial-gradient(circle, rgba(53,224,174,.18), rgba(53,224,174,.04) 64%, transparent 70%);
+            border-color: rgba(53,224,174,.09);
+        }
+
+        .kpi:nth-child(3)::after {
+            background: radial-gradient(circle, rgba(155,92,255,.22), rgba(155,92,255,.04) 64%, transparent 70%);
+            border-color: rgba(155,92,255,.10);
+        }
+
+        .kpi:nth-child(4)::after {
+            background: radial-gradient(circle, rgba(56,217,255,.17), rgba(56,217,255,.03) 64%, transparent 70%);
+            border-color: rgba(56,217,255,.09);
+        }
+
+        .kpi .label {
+            text-transform: uppercase;
+            letter-spacing: .075em;
+            font-size: 10px;
+            font-weight: 700;
+        }
+
+        .kpi .value {
+            font-size: 25px;
+            letter-spacing: -.035em;
+        }
+
+        .kpi .hint {
+            font-size: 11px;
+        }
+
+        .hero {
+            position: relative;
+            overflow: hidden;
+            background:
+                radial-gradient(circle at 90% 18%, rgba(117,103,255,.15), transparent 29%),
+                radial-gradient(circle at 75% 100%, rgba(155,92,255,.09), transparent 30%),
+                var(--surface);
+            border-color: rgba(117,103,255,.20);
+        }
+
+        .hero::after {
+            content: "";
+            position: absolute;
+            width: 230px;
+            height: 230px;
+            right: -100px;
+            top: -110px;
+            border-radius: 50%;
+            border: 1px solid rgba(117,103,255,.12);
+            box-shadow: 0 0 0 25px rgba(117,103,255,.025), 0 0 0 50px rgba(117,103,255,.018);
+            pointer-events: none;
+        }
+
+        .hero h2 {
+            letter-spacing: -.035em;
+        }
+
+        .api-card {
+            min-height: 155px;
+            background:
+                linear-gradient(145deg, rgba(117,103,255,.035), rgba(255,255,255,.012)),
+                var(--surface);
+        }
+
+        .api-card::after {
+            content: "";
+            position: absolute;
+            width: 100px;
+            height: 100px;
+            right: -38px;
+            top: -43px;
+            border-radius: 50%;
+            background: radial-gradient(circle, rgba(117,103,255,.16), transparent 68%);
+            border: 1px solid rgba(117,103,255,.10);
+            pointer-events: none;
+        }
+
+        .api-card header, .api-card p, .api-card footer {
+            position: relative;
+            z-index: 1;
+        }
+
+        .api-card h3 {
+            font-size: 14px;
+            letter-spacing: -.01em;
+        }
+
+        .api-card .muted.small {
+            text-transform: uppercase;
+            letter-spacing: .07em;
+            font-size: 9px;
+            font-weight: 700;
+        }
+
+        .badge {
+            box-shadow: inset 0 1px 0 rgba(255,255,255,.035);
+        }
+
+        .badge.ok { box-shadow: 0 0 14px rgba(53,224,174,.045); }
+        .badge.purple { box-shadow: 0 0 14px rgba(155,92,255,.06); }
+
+        .summary-card {
+            background:
+                radial-gradient(circle at 92% 8%, rgba(117,103,255,.08), transparent 26%),
+                var(--surface);
+        }
+
+        .level-card {
+            box-shadow: 0 12px 32px rgba(0,0,0,.16), inset 0 1px 0 rgba(255,255,255,.025);
+            border-color: rgba(117,103,255,.13);
+            background: rgba(255,255,255,.025);
+            backdrop-filter: blur(8px);
+        }
+
+        .progress-track {
+            background: rgba(255,255,255,.06);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,.18);
+        }
+
+        .progress-fill {
+            background: linear-gradient(90deg, var(--primary), #a45cff, #38d9ff);
+            box-shadow: 0 0 14px rgba(117,103,255,.25);
+        }
+
+        table tbody tr {
+            transition: background .15s ease;
+        }
+
+        table tbody tr:hover {
+            background: linear-gradient(90deg, rgba(117,103,255,.05), transparent);
+        }
+
+        th {
+            text-transform: uppercase;
+            letter-spacing: .045em;
+            font-size: 10px;
+        }
+
+        .btn-primary {
+            box-shadow: 0 6px 18px rgba(117,103,255,.16);
+        }
+
+        .btn-primary:hover {
+            box-shadow: 0 9px 24px rgba(117,103,255,.24);
+        }
+
+        @media (max-width: 1100px) {
+            .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+        }
+
+        @media (max-width: 640px) {
+            .kpis { grid-template-columns: 1fr; }
+            .kpi { min-height: 120px; }
+        }
+
+    </style>
+</head>
+<body>
+<div class="app">
+
+    <!-- ============== Barra lateral ============== -->
+    <aside class="sidebar" id="sidebar">
+        <div class="brand">
+            <div class="brand-logo">A</div>
+            <div>
+                <div class="brand-name">Automata</div>
+                <div class="brand-sub">Commerce Control · v5.3</div>
+            </div>
+        </div>
+        <nav class="nav" aria-label="Navegación principal">
+            <a href="#/inicio" data-nav="inicio"><span class="nav-icon">${icon(ICON_HOME)}</span><span>Inicio</span></a>
+            <a href="#/apis" data-nav="apis"><span class="nav-icon">${icon(ICON_API)}</span><span>APIs y conectores</span></a>
+            <a href="#/chats" data-nav="chats"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Mensajería</span></a>
+            <a href="#/catalogo" data-nav="catalogo"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Catálogo</span></a>
+            <a href="#/metricas" data-nav="metricas"><span class="nav-icon">${icon(ICON_CHART)}</span><span>Métricas</span></a>
+            <a href="#/automatizacion" data-nav="automatizacion"><span class="nav-icon">${icon(ICON_SPARK)}</span><span>Automatización</span></a>
+        </nav>
+        <div class="side-foot">Más canales, más clientes, más ventas.</div>
+    </aside>
+    <div class="scrim" id="scrim"></div>
+
+    <div class="main">
+        <!-- ============== Barra superior ============== -->
+        <header class="topbar">
+            <button type="button" class="btn icon-btn menu-btn" id="menu-btn" aria-label="Abrir menú">${icon(ICON_MENU)}</button>
+            <h1 id="page-title">Inicio</h1>
+            <div class="spacer"></div>
+            <span class="badge $globalClass" title="Estado de las integraciones">
+                <span class="dot ${if (globalClass == "ok") "pulse" else ""}"></span>
+                <span class="status-text">$globalText</span>
+            </span>
+            <button type="button" class="btn icon-btn" id="theme-toggle" aria-label="Cambiar entre modo claro y oscuro" title="Cambiar entre modo claro y oscuro">
+                ${icon(ICON_SUN, "ic ic-sun")}${icon(ICON_MOON, "ic ic-moon")}
+            </button>
+        </header>
+
+        <main class="content">
+
+            <!-- ==================== SUBPÁGINA: INICIO ==================== -->
+            <section class="view" data-view="inicio">
+                <div class="card hero">
+                    <div>
+                        <h2>$heroHeadline</h2>
+                        <p>Conecta tus canales, completa tus misiones y convierte el panel en el centro de mando de tu tienda multicanal.</p>
+                        <div class="achievements">
+                            <span class="badge neutral">⚡ $functionalApis APIs saludables</span>
+                            <span class="badge neutral">💬 $totalDeals conversaciones</span>
+                            <span class="badge neutral">🏆 Nivel $operatorLevel</span>
+                        </div>
+                    </div>
+                    <div class="level-card">
+                        <div class="level-row">
+                            <div>
+                                <div class="t1">Progreso de configuración</div>
+                                <div class="t2">$setupProgress% completado</div>
+                            </div>
+                            <span class="badge purple sm">Nivel $operatorLevel / 5</span>
+                        </div>
+                        <div class="progress-track"><div class="progress-fill" style="width:$setupProgress%"></div></div>
+                        <div class="quest-list">
+                            <div class="quest ${if (totalProducts > 0) "done" else ""}"><span class="quest-dot"></span> Catálogo cargado</div>
+                            <div class="quest ${if (readyForShopify > 0) "done" else ""}"><span class="quest-dot"></span> Productos en Shopify</div>
+                            <div class="quest ${if (readyForMeta > 0) "done" else ""}"><span class="quest-dot"></span> Productos en Meta</div>
+                            <div class="quest ${if (functionalApis > 0) "done" else ""}"><span class="quest-dot"></span> APIs funcionales</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="kpis">
+                    <div class="card kpi">
+                        <p class="label">Catálogo comercial</p>
+                        <p class="value">$totalProducts <small>ítems</small></p>
+                        <p class="hint">Fuente de verdad: Excel v2</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">Shopify</p>
+                        <p class="value v-ok">$readyForShopify / $totalProducts</p>
+                        <p class="hint">Productos publicados en el canal</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">Meta Shop (Colombia)</p>
+                        <p class="value v-purple">$readyForMeta / $totalProducts</p>
+                        <p class="hint">Modo: CATALOG_ONLY</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">Negociación L0–L4</p>
+                        <p class="value v-primary">Protección PM</p>
+                        <p class="hint">Invarianza: Precio ≥ L4 ≥ PM activa</p>
+                    </div>
+                </div>
+
+                <div class="cols-2">
+                    <div class="card card-pad summary-card">
+                        <h3>Estado de integraciones</h3>
+                        <p>${apiIntegrations.size} servicios instalados</p>
+                        <div class="summary-list">
+                            <span class="badge ok">Funcionales: $functionalApis</span>
+                            <span class="badge warn">Degradadas: $degradedApis</span>
+                            <span class="badge bad">Deshabilitadas: $disabledApis</span>
+                        </div>
+                        <a class="btn btn-primary" href="#/apis">Ver integraciones</a>
+                    </div>
+                    <div class="card card-pad summary-card">
+                        <h3>Resumen de tratos</h3>
+                        <p>$totalDeals conversaciones registradas</p>
+                        <div class="summary-list">
+                            <span class="badge ok">✓ Realizados: $tratosCerrados</span>
+                            <span class="badge info">📦 Pendientes de envío: $pendientesEnvio</span>
+                            <span class="badge warn">⏳ En negociación: $enNegociacion</span>
+                            <span class="badge bad">✕ Cancelados: $cancelados</span>
+                        </div>
+                        <a class="btn btn-primary" href="#/chats">Ver mensajería</a>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== SUBPÁGINA: APIS ==================== -->
+            <section class="view" data-view="apis" hidden>
+                <div class="page-head">
+                    <div>
+                        <h2>Estado de APIs y aplicaciones conectadas</h2>
+                        <p>Disponibilidad, tokens y adaptadores instalados.</p>
+                    </div>
+                    <div class="chips">
+                        <span class="badge neutral">${apiIntegrations.size} servicios instalados</span>
+                        <span class="badge ok">Funcionales: $functionalApis</span>
+                        <span class="badge warn">Degradadas: $degradedApis</span>
+                        <span class="badge bad">Deshabilitadas: $disabledApis</span>
+                    </div>
+                </div>
+                <div class="api-grid">
+                    $apiCardsHtml
+                </div>
+            </section>
+
+            <!-- ==================== SUBPÁGINA: MENSAJERÍA ==================== -->
+            <section class="view" data-view="chats" hidden>
+                <div class="page-head">
+                    <div>
+                        <h2>Chats y conversaciones por canal</h2>
+                        <p>Tratos realizados, pendientes de envío, negociaciones activas y cancelaciones.</p>
+                    </div>
+                    <div class="chips">
+                        <span class="badge ok">✓ Realizados: $tratosCerrados</span>
+                        <span class="badge info">📦 Pendientes de envío: $pendientesEnvio</span>
+                        <span class="badge warn">⏳ En negociación: $enNegociacion</span>
+                        <span class="badge bad">✕ Cancelados: $cancelados</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
+                        <div class="chips" role="group" aria-label="Filtrar por canal">
+                            <span class="muted">Canal:</span>
+                            <button type="button" class="chip active" data-filter="all" aria-pressed="true">Todos</button>
+                            $channelChipsHtml
+                        </div>
+                    </div>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>ID chat</th>
+                                    <th>Canal / app</th>
+                                    <th>Cliente</th>
+                                    <th>Producto</th>
+                                    <th class="num">Oferta / monto</th>
+                                    <th class="center">Estado del trato</th>
+                                    <th class="num">Tiempo</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                $chatDealRowsHtml
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== SUBPÁGINA: CATÁLOGO ==================== -->
+            <section class="view" data-view="catalogo" hidden>
+                <div class="page-head">
+                    <div>
+                        <h2>Catálogo y estado operacional multicanal</h2>
+                        <p>Stock maestro frente a stock vivo, y publicación en cada canal.</p>
+                    </div>
+                    <span class="badge neutral">$totalProducts ítems</span>
+                </div>
+                <div class="card">
+                    <div class="table-wrap">
+                        <table style="min-width:1080px">
+                            <thead>
+                                <tr>
+                                    <th>Key</th>
+                                    <th>Producto</th>
+                                    <th>Marca / tipo</th>
+                                    <th>Condición</th>
+                                    <th>Ubicación</th>
+                                    <th class="num">Precio pub. (PP)</th>
+                                    <th class="center">Stock maestro</th>
+                                    <th class="center">Stock vivo BD</th>
+                                    <th class="center">Shopify</th>
+                                    <th class="center">Meta Shop</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                $productRowsHtml
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== SUBPÁGINA: MÉTRICAS ==================== -->
+            <section class="view" data-view="metricas" hidden>
+                <div class="page-head">
+                    <div>
+                        <h2>Métricas y estadísticas</h2>
+                        <p>Calculadas con las conversaciones registradas en este momento.</p>
+                    </div>
+                </div>
+
+                <div class="kpis">
+                    <div class="card kpi">
+                        <p class="label">Conversaciones</p>
+                        <p class="value">$totalDeals</p>
+                        <p class="hint">En todos los canales</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">Tratos realizados</p>
+                        <p class="value v-ok">$tratosCerrados</p>
+                        <p class="hint">$pendientesEnvio pendientes de envío</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">Tasa de cierre</p>
+                        <p class="value v-primary">$closeRate%</p>
+                        <p class="hint">$tratosCerrados de $totalDeals conversaciones</p>
+                    </div>
+                    <div class="card kpi">
+                        <p class="label">En negociación</p>
+                        <p class="value v-info">$enNegociacion</p>
+                        <p class="hint">$cancelados cancelados</p>
+                    </div>
+                </div>
+
+                <div class="card notice">
+                    ${icon(ICON_INFO)}
+                    <p><strong>Métricas pendientes de definir:</strong> ventas brutas en COP, margen protegido y tiempo promedio de cierre. Todavía no hay una fuente de datos para calcularlas, por eso no se muestran valores de ejemplo.</p>
+                </div>
+
+                <div class="cols-2">
+                    <div class="card card-pad">
+                        <h3>Tratos por canal</h3>
+                        <p>Conversaciones y cierres en cada aplicación.</p>
+                        <div style="margin-top:18px">$channelBarsHtml</div>
+                    </div>
+                    <div class="card card-pad">
+                        <h3>Distribución por estado</h3>
+                        <p>Cómo se reparten las conversaciones.</p>
+                        <div style="margin-top:18px">$stateBarsHtml</div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-head">
                         <div>
-                            <div class="text-[10px] tracking-[.32em] uppercase text-cyan-300 font-bold">AUTOMATA · COMMERCE CONTROL</div>
-                            <h1 class="text-xl font-bold tracking-tight">Tienda Virtual Multicanal</h1>
-                            <p class="text-xs text-indigo-300">v5.3 · Seguimiento operativo · APIs · Chats · Métricas · Analítica</p>
+                            <h3>Rendimiento por producto</h3>
+                            <p>Consultas, cierres y cancelaciones.</p>
                         </div>
                     </div>
-                    <div class="flex items-center space-x-3">
-                        <span class="px-3 py-1 bg-emerald-900/60 text-emerald-300 border border-emerald-500/30 text-xs rounded-full flex items-center shadow-sm">
-                            <span class="w-2 h-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></span> Sistema Operativo & APIs Conectadas
-                        </span>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Producto</th>
+                                    <th class="center">Consultas totales</th>
+                                    <th class="center">Tratos realizados</th>
+                                    <th class="center">Cancelados</th>
+                                    <th class="center">Conversión</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                $productMetricsHtml
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </section>
+
+            <!-- ==================== SUBPÁGINA: AUTOMATIZACIÓN ==================== -->
+            <section class="view" data-view="automatizacion" hidden>
+                <div class="page-head">
+                    <div>
+                        <h2>Automatización</h2>
+                        <p>Importa tu matriz comercial y prueba la escalera de negociación.</p>
                     </div>
                 </div>
 
-                <!-- Navegación principal: conserva los IDs para switchTab() -->
-                <div class="max-w-7xl mx-auto flex space-x-8 text-sm border-t border-gray-800 pt-2">
-                    <button id="btn-tab-ops" onclick="switchTab('ops')" class="py-2.5 px-1 nav-tab-active flex items-center space-x-2 outline-none">
-                        <span class="text-cyan-300">▦</span>
-                        <span>Operación, APIs & Chats</span>
-                    </button>
-                    <button id="btn-tab-metrics" onclick="switchTab('metrics')" class="py-2.5 px-1 nav-tab-inactive flex items-center space-x-2 outline-none">
-                        <span class="text-violet-300">▥</span>
-                        <span>Métricas & Analítica</span>
-                    </button>
+                <div class="cols-2">
+                    <div class="card card-pad stack">
+                        <div>
+                            <h3>Importación de matriz comercial (Excel v2)</h3>
+                            <p>3 hojas: Inventario, Publicacion, Canales.</p>
+                        </div>
+                        <form action="/api/excel/upload" method="post" enctype="multipart/form-data" class="stack">
+                            $csrfInput
+                            <div class="dropzone">
+                                <input type="file" name="file" accept=".xlsx" aria-label="Archivo Excel comercial">
+                                <p>Carga un archivo .xlsx comercial (ej. NEGOCIO.xlsx).</p>
+                            </div>
+                            <button type="submit" class="btn btn-primary btn-block">Cargar y sincronizar operación</button>
+                        </form>
+                    </div>
+
+                    <div id="simulator-section" class="card card-pad stack">
+                        <div class="form-row" style="justify-content:space-between;align-items:flex-start">
+                            <div>
+                                <h3>Simulador de negociación L0–L4</h3>
+                                <p>Prueba ofertas contra la protección PM.</p>
+                            </div>
+                            <span class="badge ok sm">Motor en vivo</span>
+                        </div>
+                        <div id="sim-results" class="console" aria-live="polite">
+                            <span class="muted">Escribe una oferta de cliente para probar la escalera de negociación y la protección PM…</span>
+                        </div>
+                        <form hx-post="/api/sim/chat" hx-target="#sim-results" class="form-row">
+                            <input type="text" name="message" class="input" placeholder="Ej: Te ofrezco 95000 por los audífonos PROD-001" aria-label="Mensaje de prueba">
+                            <button type="submit" class="btn btn-ok">Probar oferta</button>
+                        </form>
+                    </div>
                 </div>
-            </header>
+            </section>
 
-            <main class="max-w-7xl mx-auto px-6 py-8 space-y-8">
+        </main>
+    </div>
+</div>
 
-                <!-- ==================== TAB 1: OPERACIÓN, APIS & CHATS ==================== -->
-                <div id="tab-ops" class="space-y-8">
+<script>
+    (function () {
+        'use strict';
 
-                    <!-- Fila 1: Indicadores KPI Rápidos -->
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-                        <div class="bg-white rounded-xl shadow-sm border p-5">
-                            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Catálogo Comercial</p>
-                            <h3 class="text-3xl font-extrabold text-gray-900 mt-1">$totalProducts <span class="text-sm font-normal text-gray-500">ítems</span></h3>
-                            <p class="text-xs text-indigo-600 mt-2">Fuente de verdad: Excel v2</p>
-                        </div>
+        /* ---------- Subpáginas (ruteo por hash) ---------- */
+        var VIEWS = ['inicio', 'apis', 'chats', 'catalogo', 'metricas', 'automatizacion'];
+        var TITLES = {
+            inicio: 'Inicio',
+            apis: 'APIs y conectores',
+            chats: 'Mensajería',
+            catalogo: 'Catálogo',
+            metricas: 'Métricas',
+            automatizacion: 'Automatización'
+        };
 
-                        <div class="bg-white rounded-xl shadow-sm border p-5">
-                            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Shopify GraphQL API</p>
-                            <h3 class="text-3xl font-extrabold text-emerald-600 mt-1">$readyForShopify / $totalProducts</h3>
-                            <p class="text-xs text-emerald-600 mt-2">Publicados & Webhooks HMAC Activos</p>
-                        </div>
+        function currentView() {
+            var h = (location.hash || '').replace(/^#\/?/, '');
+            return VIEWS.indexOf(h) >= 0 ? h : 'inicio';
+        }
 
-                        <div class="bg-white rounded-xl shadow-sm border p-5">
-                            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Meta Shop (Colombia)</p>
-                            <h3 class="text-3xl font-extrabold text-purple-600 mt-1">$readyForMeta / $totalProducts</h3>
-                            <p class="text-xs text-purple-600 mt-2">Modo: CATALOG_ONLY</p>
-                        </div>
+        function showView() {
+            var v = currentView();
+            document.querySelectorAll('.view').forEach(function (s) {
+                s.hidden = s.getAttribute('data-view') !== v;
+            });
+            document.querySelectorAll('[data-nav]').forEach(function (a) {
+                if (a.getAttribute('data-nav') === v) { a.setAttribute('aria-current', 'page'); }
+                else { a.removeAttribute('aria-current'); }
+            });
+            document.getElementById('page-title').textContent = TITLES[v];
+            document.title = TITLES[v] + ' · Commerce Control';
+            document.body.classList.remove('nav-open');
+            window.scrollTo(0, 0);
+        }
+        window.addEventListener('hashchange', showView);
+        showView();
 
-                        <div class="bg-white rounded-xl shadow-sm border p-5">
-                            <p class="text-xs font-semibold text-gray-500 uppercase tracking-wider">Negociación L0-L4</p>
-                            <h3 class="text-3xl font-extrabold text-indigo-600 mt-1">Protección PM</h3>
-                            <p class="text-xs text-indigo-600 mt-2">Invarianza ${'$'}Precio &ge; L4 &ge; PM Activa</p>
-                        </div>
-                    </div>
+        /* ---------- Menú móvil ---------- */
+        document.getElementById('menu-btn').addEventListener('click', function () {
+            document.body.classList.toggle('nav-open');
+        });
+        document.getElementById('scrim').addEventListener('click', function () {
+            document.body.classList.remove('nav-open');
+        });
 
-                    <!-- SECCIÓN: ESTADO DE APIS E INTEGRACIONES INSTALADAS -->
-                    <div class="space-y-4">
-                        <div class="flex justify-between items-center">
-                            <div>
-                                <h3 class="text-lg font-bold text-gray-900 flex items-center">
-                                    <svg class="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
-                                    Estado de APIs & Aplicaciones Conectadas
-                                </h3>
-                                <p class="text-xs text-gray-500">Monitoreo en tiempo real de disponibilidad, tokens y adaptadores instalados</p>
-                            </div>
-                            <span class="text-xs bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full border border-indigo-200 font-semibold">
-                                ${apiIntegrations.size} Servicios Instalados
-                            </span>
-                        </div>
-                        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-                            $apiCardsHtml
-                        </div>
-                    </div>
+        /* ---------- Modo claro / oscuro ---------- */
+        document.getElementById('theme-toggle').addEventListener('click', function () {
+            var root = document.documentElement;
+            var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+            root.setAttribute('data-theme', next);
+            try { localStorage.setItem('theme', next); } catch (e) {}
+        });
 
-                    <!-- SECCIÓN: CHATS Y ESTADO DE TRATOS POR APP / CANAL -->
-                    <div class="bg-white rounded-xl shadow-sm border overflow-hidden space-y-4 p-6">
-                        <div class="flex flex-col md:flex-row md:items-center justify-between border-b pb-4 gap-4">
-                            <div>
-                                <h3 class="text-lg font-bold text-gray-900 flex items-center">
-                                    <svg class="w-5 h-5 mr-2 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z"></path></svg>
-                                    Estado de Chats & Conversaciones por Canal / App
-                                </h3>
-                                <p class="text-xs text-gray-500">Tratos realizados, pendientes de envío, negociaciones activas y cancelaciones</p>
-                            </div>
-                            <!-- KPI Summary Badges -->
-                            <div class="flex flex-wrap gap-2 text-xs">
-                                <span class="px-3 py-1.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 font-bold">
-                                    ✓ Tratos Realizados: $tratosCerrados
-                                </span>
-                                <span class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200 font-bold">
-                                    📦 Pendientes Envío: $pendientesEnvio
-                                </span>
-                                <span class="px-3 py-1.5 rounded-lg bg-amber-50 text-amber-800 border border-amber-200 font-bold">
-                                    ⏳ En Negociación: $enNegociacion
-                                </span>
-                                <span class="px-3 py-1.5 rounded-lg bg-rose-50 text-rose-800 border border-rose-200 font-bold">
-                                    ✕ Cancelados: $cancelados
-                                </span>
-                            </div>
-                        </div>
+        /* ---------- Filtro de chats por canal ---------- */
+        document.addEventListener('click', function (e) {
+            var chip = e.target.closest ? e.target.closest('.chip[data-filter]') : null;
+            if (!chip) { return; }
+            var ch = chip.getAttribute('data-filter');
+            document.querySelectorAll('.chip[data-filter]').forEach(function (b) {
+                var on = b.getAttribute('data-filter') === ch;
+                b.classList.toggle('active', on);
+                b.setAttribute('aria-pressed', on ? 'true' : 'false');
+            });
+            document.querySelectorAll('.chat-row').forEach(function (r) {
+                r.hidden = !(ch === 'all' || r.getAttribute('data-channel') === ch);
+            });
+        });
 
-                        <!-- Filtros Rápidos por Canal -->
-                        <div class="flex items-center space-x-2 text-xs overflow-x-auto pb-1">
-                            <span class="text-gray-500 font-semibold mr-1">Filtrar Canal:</span>
-                            <button onclick="filterChats('all')" class="px-3 py-1 bg-indigo-600 text-white rounded-full font-semibold outline-none filter-btn" id="filter-all">Todos</button>
-                            <button onclick="filterChats('whatsapp')" class="px-3 py-1 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full font-semibold outline-none filter-btn" id="filter-whatsapp">WhatsApp</button>
-                            <button onclick="filterChats('instagram')" class="px-3 py-1 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full font-semibold outline-none filter-btn" id="filter-instagram">Instagram DM</button>
-                            <button onclick="filterChats('messenger')" class="px-3 py-1 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full font-semibold outline-none filter-btn" id="filter-messenger">Messenger</button>
-                            <button onclick="filterChats('shopify_webhooks')" class="px-3 py-1 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full font-semibold outline-none filter-btn" id="filter-shopify_webhooks">Shopify Orders</button>
-                        </div>
+        /* ---------- Confirmar pago (el nombre se lee del atributo data-*, nunca se evalúa como JS) ---------- */
+        document.addEventListener('submit', function (e) {
+            var f = e.target;
+            if (f && f.classList && f.classList.contains('js-confirm-pago')) {
+                var who = f.getAttribute('data-customer') || 'este cliente';
+                if (!window.confirm('¿Confirmar pago para ' + who + '?')) { e.preventDefault(); }
+            }
+        });
 
-                        <!-- Tabla de Chats -->
-                        <div class="overflow-x-auto border rounded-lg">
-                            <table class="w-full text-left border-collapse">
-                                <thead>
-                                    <tr class="bg-gray-100 text-xs font-semibold text-gray-600 uppercase border-b">
-                                        <th class="px-4 py-2.5">ID Chat</th>
-                                        <th class="px-4 py-2.5">Canal / App</th>
-                                        <th class="px-4 py-2.5">Cliente</th>
-                                        <th class="px-4 py-2.5">Producto</th>
-                                        <th class="px-4 py-2.5 text-right">Oferta / Monto</th>
-                                        <th class="px-4 py-2.5 text-center">Estado del Trato</th>
-                                        <th class="px-4 py-2.5 text-right">Tiempo</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    $chatDealRowsHtml
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                    <!-- Fila 3: Importador de Excel & Simulador de Negociación L0-L4 -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                        <!-- Importador de Excel v2 -->
-                        <div class="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-                            <div class="flex justify-between items-center border-b pb-3">
-                                <h2 class="text-lg font-bold text-gray-900 flex items-center">
-                                    <svg class="w-5 h-5 mr-2 text-indigo-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"></path></svg>
-                                    Importación Matriz Comercial (Excel v2)
-                                </h2>
-                                <span class="text-xs text-gray-500">3 Hojas: Inventario, Publicacion, Canales</span>
-                            </div>
-                            <form action="/api/excel/upload" method="post" enctype="multipart/form-data" class="space-y-4">
-                                <div class="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center hover:border-indigo-400 transition bg-gray-50">
-                                    <input type="file" name="file" accept=".xlsx" class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"/>
-                                    <p class="text-xs text-gray-400 mt-2">Cargue archivo .xlsx comercial (ej. NEGOCIO.xlsx)</p>
-                                </div>
-                                <button type="submit" class="w-full bg-violet-accent text-white py-2.5 px-4 rounded-lg font-semibold hover:bg-indigo-700 transition shadow">
-                                    Cargar y Sincronizar Operación
-                                </button>
-                            </form>
-                        </div>
-
-                        <!-- Simulador de Chat & Negociación L0-L4 -->
-                        <div class="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-                            <div class="flex justify-between items-center border-b pb-3">
-                                <h2 class="text-lg font-bold text-gray-900 flex items-center">
-                                    <svg class="w-5 h-5 mr-2 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"></path></svg>
-                                    Simulador de Negociación L0-L4
-                                </h2>
-                                <span class="text-xs bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-semibold">Live Engine</span>
-                            </div>
-                            <div id="sim-results" class="bg-gray-50 p-4 rounded-lg text-sm min-h-[100px] border font-mono">
-                                <p class="text-gray-400 italic">Escriba una oferta de cliente para probar la escalera de negociación y la protección PM...</p>
-                            </div>
-                            <form hx-post="/api/sim/chat" hx-target="#sim-results" class="flex space-x-2">
-                                <input type="text" name="message" placeholder="Ej: Te ofrezco 95000 por los audífonos PROD-001" class="flex-1 border rounded-lg px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500 outline-none"/>
-                                <button type="submit" class="bg-emerald-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-emerald-700 transition text-sm">
-                                    Probar Oferta
-                                </button>
-                            </form>
-                        </div>
-
-                    </div>
-
-                    <!-- Fila 4: Tabla de Catálogo & Sincronización Operacional -->
-                    <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-                        <div class="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
-                            <h3 class="font-bold text-gray-900 text-lg">Catálogo & Estado Operacional Multicanal</h3>
-                            <span class="text-xs text-gray-500">Cero fugas de información financiera interna</span>
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left border-collapse">
-                                <thead>
-                                    <tr class="bg-gray-100 text-xs font-semibold text-gray-600 uppercase border-b">
-                                        <th class="px-4 py-3">Key</th>
-                                        <th class="px-4 py-3">Producto</th>
-                                        <th class="px-4 py-3">Marca / Tipo</th>
-                                        <th class="px-4 py-3">Condición</th>
-                                        <th class="px-4 py-3">Ubicación</th>
-                                        <th class="px-4 py-3 text-right">Precio Pub (PP)</th>
-                                        <th class="px-4 py-3 text-center">Stock Maestro</th>
-                                        <th class="px-4 py-3 text-center">Stock Vivo BD</th>
-                                        <th class="px-4 py-3 text-center">Shopify</th>
-                                        <th class="px-4 py-3 text-center">Meta Shop</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    $productRowsHtml
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                </div>
-
-                <!-- ==================== TAB 2: PANTALLA DE MÉTRICAS & ANALÍTICA ==================== -->
-                <div id="tab-metrics" class="space-y-8 hidden">
-
-                    <!-- Header de Métricas con Banner Informativo -->
-                    <div class="bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white rounded-2xl p-6 shadow-md space-y-3">
-                        <div class="flex justify-between items-start">
-                            <div>
-                                <span class="px-3 py-1 bg-purple-500/30 text-purple-200 border border-purple-400/30 text-xs font-bold rounded-full uppercase tracking-wider">
-                                    Panel de Analítica Operacional
-                                </span>
-                                <h2 class="text-2xl font-extrabold mt-2">📊 Pantalla de Métricas & Estadísticas</h2>
-                                <p class="text-sm text-indigo-200 mt-1">Estructura preparada para la integración de reglas de negocio, tablas de rendimiento y gráficas interactivas.</p>
-                            </div>
-                            <span class="bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 text-xs px-3 py-1.5 rounded-lg font-semibold flex items-center">
-                                <span class="w-2 h-2 rounded-full bg-emerald-400 mr-2 animate-pulse"></span> Estructura de Métricas Lista
-                            </span>
-                        </div>
-
-                        <div class="bg-white/10 backdrop-blur border border-white/10 rounded-xl p-4 text-xs text-indigo-100 flex items-start space-x-3">
-                            <svg class="w-5 h-5 text-purple-300 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
-                            <p>
-                                <strong>Espacio Reservado para Lógica de Métricas:</strong> En este panel especificaremos las lógicas de agregación de datos para las tablas y gráficas (ej. Ventas acumuladas en COP, conversión por canal, margen financiero promedio y efectividad de la escalera L0-L4).
-                            </p>
-                        </div>
-                    </div>
-
-                    <!-- Tarjetas de Métricas KPI Prometidas -->
-                    <div class="grid grid-cols-1 md:grid-cols-4 gap-6">
-                        <div class="bg-white rounded-xl shadow-sm border p-5 space-y-2">
-                            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">Ventas Totales Brutas</span>
-                            <h3 class="text-3xl font-black text-emerald-600">$470.000 COP</h3>
-                            <p class="text-xs text-gray-500 flex items-center">
-                                <span class="text-emerald-600 font-bold mr-1">↑ 3 tratos</span> cerrados en canales
-                            </p>
-                        </div>
-
-                        <div class="bg-white rounded-xl shadow-sm border p-5 space-y-2">
-                            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">Tasa de Conversión Tratos</span>
-                            <h3 class="text-3xl font-black text-indigo-600">75.0%</h3>
-                            <p class="text-xs text-gray-500">3 de 4 ofertas dentro de PM</p>
-                        </div>
-
-                        <div class="bg-white rounded-xl shadow-sm border p-5 space-y-2">
-                            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">Margen Protegido (PM)</span>
-                            <h3 class="text-3xl font-black text-purple-600">38.5%</h3>
-                            <p class="text-xs text-emerald-600 font-semibold">0% Fugas financieras</p>
-                        </div>
-
-                        <div class="bg-white rounded-xl shadow-sm border p-5 space-y-2">
-                            <span class="text-xs font-bold text-gray-400 uppercase tracking-wider">Tiempo Promedio Cierre</span>
-                            <h3 class="text-3xl font-black text-blue-600">4.2 min</h3>
-                            <p class="text-xs text-gray-500">Respuesta automatizada LLM</p>
-                        </div>
-                    </div>
-
-                    <!-- Contenedores de Gráficas y Tablas de Métricas (Placeholder Estructurado) -->
-                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
-
-                        <!-- Placeholder Gráfica 1: Distribución por Canal -->
-                        <div class="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-                            <div class="flex justify-between items-center border-b pb-3">
-                                <div>
-                                    <h3 class="font-bold text-gray-900 text-base">Ventas & Tratos por Canal (WhatsApp, IG, Messenger, Shopify)</h3>
-                                    <p class="text-xs text-gray-400">Distribución de conversión por aplicación instalada</p>
-                                </div>
-                                <span class="text-[11px] bg-indigo-50 text-indigo-700 px-2.5 py-1 rounded font-mono font-semibold">Gráfico Chart.js / Canvas</span>
-                            </div>
-                            <div class="bg-gray-50 rounded-lg p-8 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
-                                <div class="w-12 h-12 rounded-full bg-indigo-100 flex items-center justify-center text-indigo-600">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"></path></svg>
-                                </div>
-                                <p class="text-xs text-gray-500 font-medium max-w-sm">
-                                    Contenedor listo para renderizar gráfica circular/barras de distribución por canal una vez definidas las reglas de analítica.
-                                </p>
-                            </div>
-                        </div>
-
-                        <!-- Placeholder Gráfica 2: Conversión por Nivel L0-L4 -->
-                        <div class="bg-white rounded-xl shadow-sm border p-6 space-y-4">
-                            <div class="flex justify-between items-center border-b pb-3">
-                                <div>
-                                    <h3 class="font-bold text-gray-900 text-base">Efectividad de Escalera L0 a L4</h3>
-                                    <p class="text-xs text-gray-400">Ofertas aceptadas vs contraofertas en cada nivel</p>
-                                </div>
-                                <span class="text-[11px] bg-purple-50 text-purple-700 px-2.5 py-1 rounded font-mono font-semibold">Funnel Chart</span>
-                            </div>
-                            <div class="bg-gray-50 rounded-lg p-8 border-2 border-dashed border-gray-200 flex flex-col items-center justify-center text-center space-y-3 min-h-[220px]">
-                                <div class="w-12 h-12 rounded-full bg-purple-100 flex items-center justify-center text-purple-600">
-                                    <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"></path></svg>
-                                </div>
-                                <p class="text-xs text-gray-500 font-medium max-w-sm">
-                                    Contenedor de embudo de conversión L0 a L4 listo para las reglas de métricas que indicará el usuario.
-                                </p>
-                            </div>
-                        </div>
-
-                    </div>
-
-                    <!-- Tabla de Métricas Operacionales por Producto -->
-                    <div class="bg-white rounded-xl shadow-sm border overflow-hidden">
-                        <div class="px-6 py-4 border-b flex justify-between items-center bg-gray-50">
-                            <div>
-                                <h3 class="font-bold text-gray-900 text-lg">Métricas de Rendimiento Financiero por Producto</h3>
-                                <p class="text-xs text-gray-500">Consultas, conversiones y margen bruto promedio</p>
-                            </div>
-                            <span class="text-xs font-semibold text-indigo-600 bg-indigo-50 px-3 py-1 rounded-full border border-indigo-200">
-                                Tabla de Métricas Preparada
-                            </span>
-                        </div>
-                        <div class="overflow-x-auto">
-                            <table class="w-full text-left border-collapse">
-                                <thead>
-                                    <tr class="bg-gray-100 text-xs font-semibold text-gray-600 uppercase border-b">
-                                        <th class="px-4 py-3">Key</th>
-                                        <th class="px-4 py-3">Producto</th>
-                                        <th class="px-4 py-3 text-center">Consultas Totales</th>
-                                        <th class="px-4 py-3 text-center">Tratos Realizados</th>
-                                        <th class="px-4 py-3 text-center">Cancelados</th>
-                                        <th class="px-4 py-3 text-right">Margen Protegido Avg</th>
-                                        <th class="px-4 py-3 text-center">Conversión %</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr class="border-b text-sm">
-                                        <td class="px-4 py-3 font-mono font-semibold text-indigo-700">PROD-001</td>
-                                        <td class="px-4 py-3 font-medium">Audífonos Bluetooth Pro ANC</td>
-                                        <td class="px-4 py-3 text-center">8</td>
-                                        <td class="px-4 py-3 text-center font-bold text-emerald-600">2</td>
-                                        <td class="px-4 py-3 text-center font-bold text-rose-600">1</td>
-                                        <td class="px-4 py-3 text-right font-semibold text-gray-900">41.6%</td>
-                                        <td class="px-4 py-3 text-center font-bold text-indigo-600">66.6%</td>
-                                    </tr>
-                                    <tr class="border-b text-sm">
-                                        <td class="px-4 py-3 font-mono font-semibold text-indigo-700">PROD-002</td>
-                                        <td class="px-4 py-3 font-medium">Reloj Inteligente Sport GPS</td>
-                                        <td class="px-4 py-3 text-center">5</td>
-                                        <td class="px-4 py-3 text-center font-bold text-emerald-600">2</td>
-                                        <td class="px-4 py-3 text-center font-bold text-gray-400">0</td>
-                                        <td class="px-4 py-3 text-right font-semibold text-gray-900">35.4%</td>
-                                        <td class="px-4 py-3 text-center font-bold text-indigo-600">100.0%</td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </div>
-
-                </div>
-
-            </main>
-
-            <!-- Script de Cambio de Pestañas e Interactividad de Filtros -->
-            <script>
-                function switchTab(tabName) {
-                    const tabOps = document.getElementById('tab-ops');
-                    const tabMetrics = document.getElementById('tab-metrics');
-                    const btnOps = document.getElementById('btn-tab-ops');
-                    const btnMetrics = document.getElementById('btn-tab-metrics');
-
-                    if (tabName === 'ops') {
-                        tabOps.classList.remove('hidden');
-                        tabMetrics.classList.add('hidden');
-                        btnOps.className = 'py-2.5 px-1 nav-tab-active flex items-center space-x-2 outline-none';
-                        btnMetrics.className = 'py-2.5 px-1 nav-tab-inactive flex items-center space-x-2 outline-none';
-                    } else {
-                        tabOps.classList.add('hidden');
-                        tabMetrics.classList.remove('hidden');
-                        btnOps.className = 'py-2.5 px-1 nav-tab-inactive flex items-center space-x-2 outline-none';
-                        btnMetrics.className = 'py-2.5 px-1 nav-tab-active flex items-center space-x-2 outline-none';
-                    }
-                }
-
-                function filterChats(channel) {
-                    const rows = document.querySelectorAll('.chat-row');
-                    const btns = document.querySelectorAll('.filter-btn');
-
-                    btns.forEach(btn => {
-                        btn.className = 'px-3 py-1 bg-gray-100 text-gray-700 hover:bg-gray-200 rounded-full font-semibold outline-none filter-btn';
-                    });
-
-                    const activeBtn = document.getElementById('filter-' + channel);
-                    if (activeBtn) {
-                        activeBtn.className = 'px-3 py-1 bg-indigo-600 text-white rounded-full font-semibold outline-none filter-btn';
-                    }
-
-                    rows.forEach(row => {
-                        if (channel === 'all' || row.getAttribute('data-channel') === channel) {
-                            row.style.display = '';
-                        } else {
-                            row.style.display = 'none';
-                        }
-                    });
-                }
-            </script>
-        </body>
-        </html>
-        """.trimIndent()
+        /* ---------- CSRF para peticiones htmx ---------- */
+        var meta = document.querySelector('meta[name="csrf-token"]');
+        var csrf = meta ? meta.getAttribute('content') : '';
+        document.body.addEventListener('htmx:configRequest', function (e) {
+            if (csrf) { e.detail.headers['X-CSRF-Token'] = csrf; }
+        });
+    })();
+</script>
+</body>
+</html>
+"""
     }
+
+    /** Normaliza el canal: minúsculas y, si no es conocido, se agrupa como "simulador". */
+    private fun channelKey(raw: String): String {
+        val k = raw.lowercase()
+        return if (CHANNEL_LABELS.containsKey(k)) k else "simulador"
+    }
+
+    /** Porcentaje con un decimal y punto decimal (independiente del idioma del servidor). */
+    private fun pct(part: Int, total: Int): String =
+        if (total == 0) "0.0" else String.format(Locale.ROOT, "%.1f", part * 100.0 / total)
+
+    private fun icon(paths: String, cls: String = "ic"): String =
+        "<svg class=\"$cls\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"1.8\" " +
+            "stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\">$paths</svg>"
+
+    private fun emptyRow(colspan: Int, message: String): String =
+        "<tr><td colspan=\"$colspan\" class=\"empty\">${escapeHtml(message)}</td></tr>"
 
     fun escapeHtml(str: String): String {
         return str.replace("&", "&amp;")

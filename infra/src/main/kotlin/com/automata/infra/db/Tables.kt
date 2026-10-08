@@ -79,6 +79,7 @@ object VentasTable : Table("tienda.ventas") {
     val fechaVenta = date("fecha_venta")
     val vendidoEn = long("vendido_en")
     val canal = text("canal").nullable()
+    val dealId = text("deal_id").nullable()
     val ingresos = long("ingresos")
     val costoTotal = long("costo_total")
     val gananciaNeta = long("ganancia_neta")

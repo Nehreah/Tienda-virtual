@@ -20,22 +20,10 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '21'
-
-      - name: Cache Gradle packages
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.gradle/caches
-            ~/.gradle/wrapper
-          key: ${{ runner.os }}-gradle-${{ hashFiles('**/*.gradle*', '**/gradle-wrapper.properties', '**/libs.versions.toml') }}
-          restore-keys: |
-            ${{ runner.os }}-gradle-
+          cache: 'gradle'
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Build with Gradle
-        run: ./gradlew check assemble --no-daemon
-
-      - name: Run unit tests
-        run: ./gradlew test --no-daemon
+      - name: Run Gradle check & assemble
+        run: ./gradlew check test assemble --no-daemon

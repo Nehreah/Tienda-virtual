@@ -4,16 +4,16 @@ services:
   app:
     build: .
     ports:
-      - "8080:8080"
+      - "${PORT:-8080}:8080"
     environment:
-      - APP_ENV=production
-      - PORT=8080
-      - DATABASE_URL=jdbc:postgresql://db:5432/tiendadb
-      - DATABASE_USER=tiendauser
-      - DATABASE_PASSWORD=tiendapassword
-      - DASHBOARD_USER=admin
-      - DASHBOARD_PASSWORD=SuperSecretDashboardPass123!
-      - CHANNEL_WRITE_ENABLED=false
+      - APP_ENV=${APP_ENV:-development}
+      - PORT=${PORT:-8080}
+      - DATABASE_URL=${DATABASE_URL:-jdbc:postgresql://db:5432/tiendadb}
+      - DATABASE_USER=${DATABASE_USER:-tiendauser}
+      - DATABASE_PASSWORD=${DATABASE_PASSWORD:?DATABASE_PASSWORD es obligatoria}
+      - DASHBOARD_USER=${DASHBOARD_USER:-admin}
+      - DASHBOARD_PASSWORD=${DASHBOARD_PASSWORD:?DASHBOARD_PASSWORD es obligatoria}
+      - CHANNEL_WRITE_ENABLED=${CHANNEL_WRITE_ENABLED:-false}
     depends_on:
       db:
         condition: service_healthy
@@ -22,13 +22,13 @@ services:
   db:
     image: postgres:16-alpine
     environment:
-      - POSTGRES_DB=tiendadb
-      - POSTGRES_USER=tiendauser
-      - POSTGRES_PASSWORD=tiendapassword
+      - POSTGRES_DB=${POSTGRES_DB:-tiendadb}
+      - POSTGRES_USER=${POSTGRES_USER:-tiendauser}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-tiendapassword}
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U tiendauser -d tiendadb"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tiendauser} -d ${POSTGRES_DB:-tiendadb}"]
       interval: 5s
       timeout: 5s
       retries: 5

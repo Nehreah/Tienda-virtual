@@ -1,5 +1,6 @@
 package com.automata.adapters.shopify
 
+import java.security.MessageDigest
 import java.util.Base64
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
@@ -16,18 +17,12 @@ object ShopifyHmacVerifier {
             mac.init(keySpec)
             val calculatedHash = mac.doFinal(rawBodyBytes)
             val calculatedBase64 = Base64.getEncoder().encodeToString(calculatedHash)
-            return MessageDigestEquals(calculatedBase64, hmacHeader)
+            return MessageDigest.isEqual(
+                calculatedBase64.toByteArray(Charsets.UTF_8),
+                hmacHeader.toByteArray(Charsets.UTF_8)
+            )
         } catch (e: Exception) {
             return false
         }
-    }
-
-    private fun MessageDigestEquals(a: String, b: String): Boolean {
-        if (a.length != b.length) return false
-        var result = 0
-        for (i in a.indices) {
-            result = result or (a[i].code xor b[i].code)
-        }
-        return result == 0
     }
 }

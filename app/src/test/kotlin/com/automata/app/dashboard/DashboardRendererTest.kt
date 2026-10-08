@@ -15,7 +15,7 @@ class DashboardRendererTest {
             channel = "whatsapp\" onmouseover=\"alert(2)",
             channelDisplayName = "WhatsApp",
             productName = payload,
-            offeredPrice = payload,
+            offeredPrice = com.automata.shared.Money.of(150_000),
             dealState = DealState.EN_NEGOCIACION,
             dealStateLabel = payload,
             timestamp = payload
