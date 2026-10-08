@@ -12,10 +12,11 @@ class ExposedImportacionesRepository {
 
     private val logger = LoggerFactory.getLogger(ExposedImportacionesRepository::class.java)
 
-    fun isHashImported(hash: String): Boolean = transaction {
+    fun isHashImported(hash: String, modo: String = "IMPORT_NEW"): Boolean = transaction {
         ImportacionesTable
             .select {
                 (ImportacionesTable.hashArchivo eq hash) and
+                (ImportacionesTable.modo eq modo) and
                 (ImportacionesTable.estado eq "COMPLETED")
             }
             .count() > 0
@@ -25,6 +26,7 @@ class ExposedImportacionesRepository {
         id: String,
         usuario: String,
         hash: String,
+        modo: String = "IMPORT_NEW",
         estado: String,
         conteosJson: String? = null,
         erroresJson: String? = null
@@ -35,6 +37,7 @@ class ExposedImportacionesRepository {
                     row[ImportacionesTable.id] = id
                     row[ImportacionesTable.usuario] = usuario
                     row[ImportacionesTable.hashArchivo] = hash
+                    row[ImportacionesTable.modo] = modo
                     row[ImportacionesTable.estado] = estado
                     row[ImportacionesTable.fecha] = Instant.now()
                     row[ImportacionesTable.conteos] = conteosJson ?: "{}"

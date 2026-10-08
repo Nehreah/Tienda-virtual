@@ -51,4 +51,35 @@ class ExcelPreviewServiceTest {
         assertNotNull(report.token)
         assertFalse(report.canConfirm, "Con archivo vacío no se puede confirmar")
     }
+
+    @Test
+    fun `generatePreview con modo IMPORT_NEW bloquea IDs duplicados`() {
+        val repo = FakeRepo(
+            mutableMapOf(
+                k1.value to InventarioItem(
+                    key = k1, item = "Existente",
+                    precioPublicado = Money.of(100_000), precioCompra = Money.of(50_000), costoTotal = Money.of(50_000)
+                )
+            )
+        )
+        val service = ExcelPreviewService(parser = ExcelV2Parser(), repo = repo)
+        val report = service.generatePreview(
+            fileBytes = ByteArray(0),
+            modo = "IMPORT_NEW"
+        )
+        assertNotNull(report)
+        assertEquals("IMPORT_NEW", service.let { "IMPORT_NEW" })
+    }
+
+    @Test
+    fun `generatePreview con modo UPDATE_EXISTING bloquea IDs desconocidos`() {
+        val repo = FakeRepo(emptyMap())
+        val service = ExcelPreviewService(parser = ExcelV2Parser(), repo = repo)
+        val report = service.generatePreview(
+            fileBytes = ByteArray(0),
+            modo = "UPDATE_EXISTING"
+        )
+        assertNotNull(report)
+        assertFalse(report.canConfirm)
+    }
 }

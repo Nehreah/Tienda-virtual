@@ -30,9 +30,10 @@ fun Route.excelRoutes(
     excelPreviewService: ExcelPreviewService,
     excelParser: ExcelV2Parser
 ) {
-    // 3. Vista Previa de Excel (/api/excel/preview — Fase C1 / N1 / N2)
+    // 3. Vista Previa de Excel (/api/excel/preview — Fase C1 / Catalog V2)
     post("/api/excel/preview") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
+        val modo = call.request.queryParameters["mode"]?.uppercase() ?: "IMPORT_NEW"
         val multipart = call.receiveMultipart()
         var fileBytes: ByteArray? = null
         var tooLarge = false
@@ -59,16 +60,18 @@ fun Route.excelRoutes(
 
         val report = excelPreviewService.generatePreview(
             fileBytes!!,
-            synchronized(AppStore.products) { AppStore.products.toMap() }
+            synchronized(AppStore.products) { AppStore.products.toMap() },
+            modo = modo
         )
 
         val statusCode = if (report.canConfirm) HttpStatusCode.OK else HttpStatusCode.BadRequest
         call.respond(statusCode, report)
     }
 
-    // 4. Confirmación e Importación Transaccional en dos pasos (/api/excel/confirmar — Fase C1)
+    // 4. Confirmación e Importación Transaccional en dos pasos (/api/excel/confirmar)
     post("/api/excel/confirmar") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
+        val modo = call.request.queryParameters["mode"]?.uppercase() ?: "IMPORT_NEW"
         val multipart = call.receiveMultipart()
         var fileBytes: ByteArray? = null
         var tooLarge = false
@@ -95,13 +98,13 @@ fun Route.excelRoutes(
 
         val report = excelPreviewService.generatePreview(
             fileBytes!!,
-            synchronized(AppStore.products) { AppStore.products.toMap() }
+            synchronized(AppStore.products) { AppStore.products.toMap() },
+            modo = modo
         )
 
         if (!report.canConfirm) {
             val reason = when {
-                report.alreadyImported -> "El archivo Excel ya fue importado previamente (mismo hash SHA-256)."
-                report.bloqueados.isNotEmpty() -> "Existen ${report.bloqueados.size} producto(s) bloqueado(s) porque están marcados como Vendidos en la BD."
+                report.alreadyImported -> "El archivo Excel ya fue importado previamente en este modo (mismo hash SHA-256)."
                 report.fileError != null -> report.fileError
                 report.formatErrors.isNotEmpty() -> "Existen errores de formato en el Excel."
                 else -> "El archivo no se puede confirmar."
@@ -116,10 +119,20 @@ fun Route.excelRoutes(
         val parseResult = excelParser.parseExcel(fileBytes!!.inputStream())
         val dbErrors = mutableListOf<String>()
 
+        // Filtrar productos según el modo
+        val creadosKeys = report.creados.map { it.key }.toSet()
+        val actualizadosKeys = report.actualizados.map { it.key }.toSet()
+
+        val productsToProcess = parseResult.products.filter { p ->
+            if (modo == "IMPORT_NEW") creadosKeys.contains(p.key.value)
+            else if (modo == "UPDATE_EXISTING") actualizadosKeys.contains(p.key.value)
+            else true
+        }
+
         try {
             if (dbRepository != null) {
                 org.jetbrains.exposed.sql.transactions.transaction {
-                    parseResult.products.forEach { p ->
+                    productsToProcess.forEach { p ->
                         val item = InventarioItem(
                             key = p.key,
                             item = p.itemName,
@@ -141,8 +154,8 @@ fun Route.excelRoutes(
                 }
             }
 
-            // N1 Fix: Refrescar la memoria SOLO TRAS COMMIT exitoso en la BD (o si no hay BD)
-            parseResult.products.forEach { p ->
+            // Refrescar la memoria SOLO TRAS COMMIT exitoso en la BD (o si no hay BD)
+            productsToProcess.forEach { p ->
                 synchronized(AppStore.products) { AppStore.products[p.key.value] = p }
                 synchronized(AppStore.inventory) {
                     val currentInv = AppStore.inventory[p.key.value]
@@ -155,8 +168,9 @@ fun Route.excelRoutes(
                 id = "IMP-${java.util.UUID.randomUUID().toString().take(8).uppercase()}",
                 usuario = "dashboard",
                 hash = report.hashArchivo,
+                modo = modo,
                 estado = "COMPLETED",
-                conteosJson = """{"creados":${report.creados.size},"actualizados":${report.actualizados.size},"sinCambios":${report.sinCambios.size}}""",
+                conteosJson = """{"creados":${report.creados.size},"actualizados":${report.actualizados.size},"sinCambios":${report.sinCambios.size},"bloqueados":${report.bloqueados.size}}""",
                 erroresJson = "[]"
             )
 
@@ -177,11 +191,13 @@ fun Route.excelRoutes(
         call.respond(
             HttpStatusCode.OK,
             mapOf(
-                "summary" to "Importación confirmada y procesada exitosamente.",
-                "importedCount" to parseResult.products.size,
+                "summary" to "Importación confirmada y procesada exitosamente en modo $modo.",
+                "modo" to modo,
+                "importedCount" to productsToProcess.size,
                 "creadosCount" to report.creados.size,
                 "actualizadosCount" to report.actualizados.size,
-                "sinCambiosCount" to report.sinCambios.size
+                "sinCambiosCount" to report.sinCambios.size,
+                "bloqueadosCount" to report.bloqueados.size
             )
         )
     }

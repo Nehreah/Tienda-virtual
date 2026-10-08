@@ -187,11 +187,10 @@ class ExcelV2Parser {
                 readAmount(data["costo"], "Costo", excelRow, rowErrors, mustBePositive = false)
             }
 
-            // PM es una columna formulada/calculada: se ignora el valor del Excel y se calcula deterministamente con la fórmula de dominio
-            val pmCop: Long? = costCop?.let { FinancialMath.precioMinimo(Money.of(it)).amountInCop }
+            val pmCop = readAmount(data["pm"], "PM", excelRow, rowErrors, mustBePositive = true)
 
             val statusRaw = data["estado"]?.takeIf { it.isNotBlank() } ?: "Activo"
-            val estadoItem = EstadoItem.desde(statusRaw)
+            val estadoItem = EstadoItem.desdeEtiqueta(statusRaw)
 
             if (ppCop != null && pmCop != null && (estadoItem == EstadoItem.PUBLICADO || estadoItem == EstadoItem.NEGOCIACION)) {
                 if (pmCop > ppCop) {

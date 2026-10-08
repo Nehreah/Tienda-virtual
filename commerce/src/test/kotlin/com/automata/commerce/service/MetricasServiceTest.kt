@@ -47,8 +47,8 @@ class MetricasServiceTest {
             diasPublicado = 5,
             periodo = Periodo.CORTO
         )
-        val r1 = VentaReparto(k1, 1L, BigDecimal("50"), inversion = 40_000, ingresos = 70_000, ganancia = 30_000)
-        val r2 = VentaReparto(k1, 2L, BigDecimal("50"), inversion = 40_000, ingresos = 70_000, ganancia = 30_000)
+        val r1 = VentaReparto(key = k1, socioId = 1L, pct = BigDecimal("50"), inversion = 40_000, ingresos = 70_000, ganancia = 30_000)
+        val r2 = VentaReparto(key = k1, socioId = 2L, pct = BigDecimal("50"), inversion = 40_000, ingresos = 70_000, ganancia = 30_000)
 
         val datos = DatosMetricas(
             productos = listOf(p1),

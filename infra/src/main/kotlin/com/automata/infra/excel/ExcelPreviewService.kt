@@ -18,7 +18,8 @@ class ExcelPreviewService(
 
     fun generatePreview(
         fileBytes: ByteArray,
-        existingMemoryProducts: Map<String, CommercialProduct> = emptyMap()
+        existingMemoryProducts: Map<String, CommercialProduct> = emptyMap(),
+        modo: String = "IMPORT_NEW"
     ): ExcelPreviewReport {
         val hash = calculateSha256(fileBytes)
         val token = "PREVIEW-$hash"
@@ -40,7 +41,7 @@ class ExcelPreviewService(
             )
         }
 
-        val alreadyImported = importacionesRepo?.isHashImported(hash) ?: false
+        val alreadyImported = importacionesRepo?.isHashImported(hash, modo) ?: false
 
         // Leer productos actuales (de BD si existe, o de memoria)
         val currentDbItems: Map<String, InventarioItem> = try {
@@ -63,49 +64,11 @@ class ExcelPreviewService(
             val existingDb = currentDbItems[keyStr]
             val existingMem = existingMemoryProducts[keyStr]
 
-            if (existingDb == null && existingMem == null) {
-                // Producto Nuevo
-                creados.add(
-                    PreviewItem(
-                        key = keyStr,
-                        item = product.itemName,
-                        status = product.status,
-                        category = product.category
-                    )
-                )
-            } else {
-                // Producto existente
-                val dbState = existingDb?.estado ?: EstadoItem.desdeEtiqueta(existingMem?.status ?: "") ?: EstadoItem.PUBLICADO
-                val excelState = EstadoItem.desdeEtiqueta(product.status) ?: EstadoItem.PUBLICADO
+            val isNew = existingDb == null && existingMem == null
 
-                // Hallazgo N2: Vendido en BD pero diferente estado en Excel -> Bloqueado
-                if (dbState == EstadoItem.VENDIDO && excelState != EstadoItem.VENDIDO) {
-                    bloqueados.add(
-                        PreviewItem(
-                            key = keyStr,
-                            item = product.itemName,
-                            status = product.status,
-                            category = product.category,
-                            reason = "El producto $keyStr está marcado como Vendido en la base de datos y no se puede modificar su estado mediante importación Excel. Usa anularVenta() si requieres reabrirlo."
-                        )
-                    )
-                    continue
-                }
-
-                // Comparar campos
-                val changes = compareFields(product, existingDb, existingMem)
-                if (changes.isNotEmpty()) {
-                    actualizados.add(
-                        PreviewItem(
-                            key = keyStr,
-                            item = product.itemName,
-                            status = product.status,
-                            category = product.category,
-                            changes = changes
-                        )
-                    )
-                } else {
-                    sinCambios.add(
+            if (modo.equals("IMPORT_NEW", ignoreCase = true)) {
+                if (isNew) {
+                    creados.add(
                         PreviewItem(
                             key = keyStr,
                             item = product.itemName,
@@ -113,6 +76,80 @@ class ExcelPreviewService(
                             category = product.category
                         )
                     )
+                } else {
+                    // En modo IMPORT_NEW, las claves duplicadas no se modifican y se reportan
+                    bloqueados.add(
+                        PreviewItem(
+                            key = keyStr,
+                            item = product.itemName,
+                            status = product.status,
+                            category = product.category,
+                            reason = "DUPLICATE_ID: La clave $keyStr ya existe en la base de datos. En modo importación de nuevos, no se modifica."
+                        )
+                    )
+                }
+            } else if (modo.equals("UPDATE_EXISTING", ignoreCase = true)) {
+                if (isNew) {
+                    // En modo UPDATE_EXISTING, las claves desconocidas no se crean y se reportan
+                    bloqueados.add(
+                        PreviewItem(
+                            key = keyStr,
+                            item = product.itemName,
+                            status = product.status,
+                            category = product.category,
+                            reason = "ID_NOT_FOUND: La clave $keyStr no existe en la base de datos. En modo actualización de existentes, no se crean productos."
+                        )
+                    )
+                } else {
+                    val dbState = existingDb?.estado ?: EstadoItem.desdeEtiqueta(existingMem?.status ?: "") ?: EstadoItem.PUBLICADO
+                    val excelState = EstadoItem.desdeEtiqueta(product.status) ?: EstadoItem.PUBLICADO
+
+                    if (dbState == EstadoItem.VENDIDO && excelState != EstadoItem.VENDIDO) {
+                        bloqueados.add(
+                            PreviewItem(
+                                key = keyStr,
+                                item = product.itemName,
+                                status = product.status,
+                                category = product.category,
+                                reason = "El producto $keyStr está marcado como Vendido en la base de datos y no se puede modificar su estado mediante importación Excel."
+                            )
+                        )
+                        continue
+                    }
+
+                    val changes = compareFields(product, existingDb, existingMem)
+                    if (changes.isNotEmpty()) {
+                        actualizados.add(
+                            PreviewItem(
+                                key = keyStr,
+                                item = product.itemName,
+                                status = product.status,
+                                category = product.category,
+                                changes = changes
+                            )
+                        )
+                    } else {
+                        sinCambios.add(
+                            PreviewItem(
+                                key = keyStr,
+                                item = product.itemName,
+                                status = product.status,
+                                category = product.category
+                            )
+                        )
+                    }
+                }
+            } else {
+                // Default legacy behavior if unclassified mode
+                if (isNew) {
+                    creados.add(PreviewItem(key = keyStr, item = product.itemName, status = product.status, category = product.category))
+                } else {
+                    val changes = compareFields(product, existingDb, existingMem)
+                    if (changes.isNotEmpty()) {
+                        actualizados.add(PreviewItem(key = keyStr, item = product.itemName, status = product.status, category = product.category, changes = changes))
+                    } else {
+                        sinCambios.add(PreviewItem(key = keyStr, item = product.itemName, status = product.status, category = product.category))
+                    }
                 }
             }
         }
@@ -131,7 +168,9 @@ class ExcelPreviewService(
         }
 
         val formatErrors = parseResult.errors
-        val canConfirm = formatErrors.isEmpty() && bloqueados.isEmpty() && !alreadyImported
+        // canConfirm if formatErrors empty, no critical file error, and not already imported.
+        // For IMPORT_NEW: bloquados contain duplicate notice if any exist, but canConfirm is true if there is at least one new product or clean file.
+        val canConfirm = formatErrors.isEmpty() && !alreadyImported && (creados.isNotEmpty() || actualizados.isNotEmpty())
 
         return ExcelPreviewReport(
             token = token,

@@ -86,11 +86,21 @@ object ReparacionesTable : Table("tienda.reparaciones") {
 }
 
 object VentasTable : Table("tienda.ventas") {
+    val ventaId = long("venta_id").autoIncrement()
     val key = text("key")
+    val cantidad = integer("cantidad").default(1)
+    val precioUnitario = long("precio_unitario").default(0)
+    val costoUnitario = long("costo_unitario").default(0)
     val fechaVenta = date("fecha_venta")
     val vendidoEn = long("vendido_en")
     val canal = text("canal").nullable()
+    val origen = text("origen").nullable()
     val dealId = text("deal_id").nullable()
+    val orderId = text("order_id").nullable()
+    val lineId = text("line_id").nullable()
+    val eventId = text("event_id").nullable()
+    val reservaId = text("reserva_id").nullable()
+    val clienteId = text("cliente_id").nullable()
     val ingresos = long("ingresos")
     val costoTotal = long("costo_total")
     val gananciaNeta = long("ganancia_neta")
@@ -99,11 +109,14 @@ object VentasTable : Table("tienda.ventas") {
     val diasPublicado = integer("dias_publicado").nullable()
     val periodo = text("periodo").nullable()
     val precioPublicado = long("precio_publicado").nullable()
+    val anuladaEn = timestamp("anulada_en").nullable()
+    val anuladaMotivo = text("anulada_motivo").nullable()
 
-    override val primaryKey = PrimaryKey(key)
+    override val primaryKey = PrimaryKey(ventaId)
 }
 
 object VentaRepartoTable : Table("tienda.venta_reparto") {
+    val ventaId = long("venta_id")
     val key = text("key")
     val socioId = long("socio_id")
     val pct = decimal("pct", 5, 2)
@@ -111,7 +124,22 @@ object VentaRepartoTable : Table("tienda.venta_reparto") {
     val ingresos = long("ingresos")
     val ganancia = long("ganancia")
 
-    override val primaryKey = PrimaryKey(key, socioId)
+    override val primaryKey = PrimaryKey(ventaId, socioId)
+}
+
+object ClienteTable : Table("tienda.cliente") {
+    val clienteId = text("cliente_id")
+    val nombre = text("nombre").nullable()
+    val email = text("email").nullable()
+    val telefono = text("telefono").nullable()
+    val direccion = text("direccion").nullable()
+    val notas = text("notas").nullable()
+    val consentimientoEn = timestamp("consentimiento_en").nullable()
+    val anonimizadoEn = timestamp("anonimizado_en").nullable()
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val actualizadoEn = timestamp("actualizado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+
+    override val primaryKey = PrimaryKey(clienteId)
 }
 
 object HistorialTable : Table("tienda.historial") {
@@ -196,6 +224,7 @@ object PublicacionesTable : Table("tienda.publicaciones") {
     val sku = text("sku")
     val canal = text("canal")
     val externalId = text("external_id")
+    val externalInventoryId = text("external_inventory_id").nullable()
     val publicado = bool("publicado").default(true)
     val stockPublicado = integer("stock_publicado").default(0)
     val ultimaSincronizacion = timestamp("ultima_sincronizacion").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
@@ -208,6 +237,7 @@ object ImportacionesTable : Table("tienda.importaciones") {
     val usuario = text("usuario")
     val fecha = timestamp("fecha").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
     val hashArchivo = text("hash_archivo")
+    val modo = text("modo").default("IMPORT_NEW")
     val estado = text("estado").default("PENDING")
     val conteos = jsonbText("conteos").nullable()
     val errores = jsonbText("errores").nullable()

@@ -9,6 +9,7 @@ import com.automata.shared.ProductKey
  */
 interface VentaRepository {
     fun findByKey(key: ProductKey): Venta?
+    fun findAllByKey(key: ProductKey): List<Venta> = findByKey(key)?.let { listOf(it) } ?: emptyList()
     fun findAll(): List<Venta>
     fun repartosDe(key: ProductKey): List<VentaReparto>
     fun repartos(): List<VentaReparto>
