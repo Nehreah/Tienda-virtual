@@ -251,22 +251,39 @@ fun main() {
             logger.error("Error cargando catálogo desde BD al arrancar: ${e.message}. Continuando con AppStore vacío.", e)
         }
     }
-    AppStore.refreshIntegrationStatuses()
-    val port = AppConfig.port
-    logger.info("===============================================================")
-    logger.info("  Tienda Virtual Multicanal, Semiautogestionada (Código Privado)")
-    logger.info("  Servidor iniciado en http://${securityPlan.host}:$port  (APP_ENV=${AppConfig.appEnv.name.lowercase()})")
-    logger.info("  Canales Activos: Shopify GraphQL, Meta Catalog, WhatsApp, IG, Messenger")
-    logger.info("===============================================================")
-    try {
-        embeddedServer(Netty, port = port, host = securityPlan.host, module = Application::module).start(wait = true)
-    } catch (e: Exception) {
-        logger.error("ERROR CRÍTICO AL INICIAR SERVIDOR WEB (puerto $port, host ${securityPlan.host}): ${e.message}")
-        if (e.message?.contains("Address already in use", ignoreCase = true) == true || e is java.net.BindException) {
-            logger.error("  SUGERENCIA: El puerto $port ya está en uso por otro proceso (por ejemplo, la primera copia del proyecto en ejecución).")
-            logger.error("  Cierra la otra instancia o define un puerto distinto mediante la variable PORT en local.properties (ejemplo: PORT=8081).")
+    var initialPort = AppConfig.port
+    val maxTries = if (AppConfig.appEnv == AppEnv.LOCAL) 10 else 1
+
+    for (attempt in 0 until maxTries) {
+        val targetPort = initialPort + attempt
+        try {
+            val server = embeddedServer(Netty, port = targetPort, host = securityPlan.host, module = Application::module)
+            if (attempt > 0) {
+                logger.info("  AVISO: El puerto $initialPort estaba en uso. Se seleccionó el puerto alternativo $targetPort en desarrollo local.")
+            }
+            logger.info("===============================================================")
+            logger.info("  Tienda Virtual Multicanal, Semiautogestionada (Código Privado)")
+            logger.info("  Servidor iniciado en http://${securityPlan.host}:$targetPort  (APP_ENV=${AppConfig.appEnv.name.lowercase()})")
+            logger.info("  Canales Activos: Shopify GraphQL, Meta Catalog, WhatsApp, IG, Messenger")
+            logger.info("===============================================================")
+            server.start(wait = true)
+            break
+        } catch (e: Exception) {
+            val isBindError = e.message?.contains("Address already in use", ignoreCase = true) == true ||
+                              e.message?.contains("La dirección ya se está usando", ignoreCase = true) == true ||
+                              e is java.net.BindException ||
+                              e.cause is java.net.BindException
+            if (isBindError && AppConfig.appEnv == AppEnv.LOCAL && attempt < maxTries - 1) {
+                logger.warn("El puerto $targetPort está ocupado. Intentando puerto ${targetPort + 1}...")
+                continue
+            }
+            logger.error("ERROR CRÍTICO AL INICIAR SERVIDOR WEB (puerto $targetPort, host ${securityPlan.host}): ${e.message}")
+            if (isBindError) {
+                logger.error("  SUGERENCIA: El puerto $targetPort ya está en uso por otro proceso (por ejemplo, otra copia del proyecto).")
+                logger.error("  Cierra la otra instancia o define un puerto distinto mediante la variable PORT en local.properties (ejemplo: PORT=8081).")
+            }
+            exitProcess(1)
         }
-        exitProcess(1)
     }
 }
 
