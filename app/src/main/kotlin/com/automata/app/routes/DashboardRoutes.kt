@@ -46,6 +46,24 @@ fun Route.dashboardRoutes(
         call.respondText(html, ContentType.Text.Html)
     }
 
+    get("/chat") {
+        if (!call.requireDashboardAuth(dashboardGuard)) return@get
+        val html = com.automata.app.dashboard.ChatRenderer.renderChatPage(
+            conversationsHtml = "<!-- Cargado dinámicamente -->",
+            activeChatHtml = "<!-- Selecciona una conversación -->"
+        )
+        call.respondText(html, ContentType.Text.Html)
+    }
+
+    get("/ventas") {
+        if (!call.requireDashboardAuth(dashboardGuard)) return@get
+        val html = com.automata.app.dashboard.VentasRenderer.renderVentasPage(
+            salesHtml = "<!-- Cargado dinámicamente -->",
+            syncPanelHtml = "<!-- Cargado dinámicamente -->"
+        )
+        call.respondText(html, ContentType.Text.Html)
+    }
+
     // 2. Simulador de Negociación L0-L4
     post("/api/sim/chat") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post

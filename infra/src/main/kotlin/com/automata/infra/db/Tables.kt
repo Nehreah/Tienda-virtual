@@ -111,6 +111,14 @@ object VentasTable : Table("tienda.ventas") {
     val precioPublicado = long("precio_publicado").nullable()
     val anuladaEn = timestamp("anulada_en").nullable()
     val anuladaMotivo = text("anulada_motivo").nullable()
+    val estadoLogistico = text("estado_logistico").default("SIN_ENVIO")
+    val fechaEnvio = timestamp("fecha_envio").nullable()
+    val fechaEntrega = timestamp("fecha_entrega").nullable()
+    val guiaEnvio = text("guia_envio").nullable()
+    val transportadora = text("transportadora").nullable()
+    val nota = text("nota").nullable()
+    val canalDetalle = text("canal_detalle").nullable()
+    val syncVersion = long("sync_version").default(1L)
 
     override val primaryKey = PrimaryKey(ventaId)
 }
@@ -167,9 +175,38 @@ object ConversacionesTable : Table("tienda.conversaciones") {
     val pendingCounterAt = timestamp("pending_counter_at").nullable()
     val currentReservationId = text("current_reservation_id").nullable()
     val mensajes = jsonbText("mensajes").nullable()
+    val atencion = text("atencion").default("BOT")
+    val atendidoPor = text("atendido_por").nullable()
+    val atencionDesde = timestamp("atencion_desde").nullable()
+    val requiereAtencion = bool("requiere_atencion").default(false)
+    val ultimoEntranteEn = timestamp("ultimo_entrante_en").nullable()
     val lastUpdated = timestamp("last_updated")
 
     override val primaryKey = PrimaryKey(conversationId)
+}
+
+object ConversacionMensajesTable : Table("tienda.conversacion_mensajes") {
+    val id = long("id").autoIncrement()
+    val conversationId = text("conversation_id")
+    val emisor = text("emisor")
+    val contenido = text("contenido")
+    val estadoEnvio = text("estado_envio").default("ENVIADO")
+    val errorEnvio = text("error_envio").nullable()
+    val canalMsgId = text("canal_msg_id").nullable()
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+    val actualizadoEn = timestamp("actualizado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+
+    override val primaryKey = PrimaryKey(id)
+}
+
+object ChatEventosTable : Table("tienda.chat_eventos") {
+    val id = long("id").autoIncrement()
+    val conversationId = text("conversation_id")
+    val tipo = text("tipo")
+    val refId = long("ref_id").nullable()
+    val creadoEn = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
+
+    override val primaryKey = PrimaryKey(id)
 }
 
 object ReservasTable : Table("tienda.reservas") {
@@ -201,6 +238,12 @@ object OutboxTable : Table("tienda.outbox") {
     val createdAt = timestamp("creado_en").defaultExpression(org.jetbrains.exposed.sql.javatime.CurrentTimestamp())
     val lastAttemptAt = timestamp("actualizado_en").nullable()
     val errorMessage = text("ultimo_error").nullable()
+    val accionManualRequerida = bool("accion_manual_requerida").default(false)
+    val accionManualTipo = text("accion_manual_tipo").nullable()
+    val accionManualDetalle = text("accion_manual_detalle").nullable()
+    val accionManualResuelta = bool("accion_manual_resuelta").default(false)
+    val accionManualResueltaEn = timestamp("accion_manual_resuelta_en").nullable()
+    val accionManualResueltaPor = text("accion_manual_resuelta_por").nullable()
 
     override val primaryKey = PrimaryKey(eventId)
 }

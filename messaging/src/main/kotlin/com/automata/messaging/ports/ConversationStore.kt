@@ -1,6 +1,7 @@
 package com.automata.messaging.ports
 
 import com.automata.messaging.model.Conversation
+import com.automata.messaging.model.Message
 import java.util.concurrent.ConcurrentHashMap
 
 /**
@@ -12,6 +13,11 @@ interface ConversationStore {
     fun findById(conversationId: String): Conversation?
     fun save(conversation: Conversation)
     fun all(): List<Conversation>
+
+    // Métodos para el nuevo modelo de persistencia de mensajes (Fase 2)
+    fun registrarMensajeCliente(convId: String, canalMsgId: String?, contenido: String): Long? = null
+    fun registrarMensajeBot(convId: String, contenido: String): Long? = null
+    fun marcarEnvio(msgId: Long, estado: String, error: String? = null, canalMsgId: String? = null) {}
 }
 
 /**
@@ -32,4 +38,26 @@ class InMemoryConversationStore : ConversationStore {
     }
 
     override fun all(): List<Conversation> = byId.values.toList()
+
+    override fun registrarMensajeCliente(convId: String, canalMsgId: String?, contenido: String): Long? {
+        val conv = byId[convId]
+        if (conv != null) {
+            byId[convId] = conv.copy(messages = conv.messages + Message(canalMsgId ?: "mock_id", "CLIENTE", contenido))
+        }
+        return 1L
+    }
+
+    override fun registrarMensajeBot(convId: String, contenido: String): Long? {
+        val conv = byId[convId]
+        if (conv != null && conv.atencion == "HUMANO") return null
+        
+        if (conv != null) {
+            byId[convId] = conv.copy(messages = conv.messages + Message("mock_bot", "BOT", contenido))
+        }
+        return 2L
+    }
+
+    override fun marcarEnvio(msgId: Long, estado: String, error: String?, canalMsgId: String?) {
+        // No-op for tests
+    }
 }

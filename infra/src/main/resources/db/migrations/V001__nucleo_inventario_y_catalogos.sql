@@ -298,9 +298,6 @@ CREATE TRIGGER trg_a_inversion_bloqueo
 -- Retirar un socio: se elimina si nunca participó; se archiva si ya tiene ventas o inversiones en artículos vendidos.
 CREATE OR REPLACE FUNCTION tienda.retirar_socio(p_id bigint) RETURNS text LANGUAGE plpgsql AS $$
 BEGIN
-  DELETE FROM tienda.inventario_inversion ii USING tienda.inventario i
-   WHERE ii.socio_id = p_id AND ii.key = i.key AND i.estado <> 'Vendido';
-  -- tienda.venta_reparto la crea V4; la función solo se ejecuta con la base ya completa.
   IF EXISTS (SELECT 1 FROM tienda.venta_reparto WHERE socio_id = p_id)
      OR EXISTS (SELECT 1 FROM tienda.inventario_inversion WHERE socio_id = p_id) THEN
     UPDATE tienda.socio SET activo = false, archivado_en = now() WHERE id = p_id;

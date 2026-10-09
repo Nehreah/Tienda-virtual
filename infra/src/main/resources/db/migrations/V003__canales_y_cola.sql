@@ -39,8 +39,14 @@ CREATE TABLE tienda.outbox (
   creado_en         timestamptz NOT NULL DEFAULT now(),
   actualizado_en    timestamptz,
   ultimo_error      text,
+  accion_manual_requerida boolean NOT NULL DEFAULT false,
+  accion_manual_tipo      text,
+  accion_manual_detalle   text,
+  accion_manual_resuelta  boolean NOT NULL DEFAULT false,
+  accion_manual_resuelta_en timestamptz,
+  accion_manual_resuelta_por text,
   CONSTRAINT ck_outbox_estado CHECK (estado IN
-    ('PENDING', 'SENDING', 'SENT', 'FAILED', 'DEAD', 'SKIPPED_READ_ONLY', 'SKIPPED_NOT_PUBLISHED'))
+    ('PENDING', 'SENDING', 'SENT', 'FAILED', 'DEAD', 'SKIPPED_READ_ONLY', 'SKIPPED_NOT_PUBLISHED', 'SKIPPED_NOT_IMPLEMENTED'))
 );
 CREATE INDEX ix_outbox_cola ON tienda.outbox (estado, proxima_ejecucion);
 -- Un solo aviso por producto, canal y versión de stock (evita duplicados)
@@ -75,6 +81,73 @@ CREATE TRIGGER trg_c_inventario_stock_outbox
   AFTER UPDATE OF cantidad ON tienda.inventario
   FOR EACH ROW WHEN (OLD.cantidad IS DISTINCT FROM NEW.cantidad)
   EXECUTE FUNCTION tienda.trg_inventario_stock_outbox();
+
+-- Encola aviso de actualización de metadatos de producto hacia los canales donde está publicado
+CREATE OR REPLACE FUNCTION tienda.fn_encolar_producto(p_key text) RETURNS integer LANGUAGE plpgsql AS $$
+DECLARE
+  v_n integer;
+BEGIN
+  INSERT INTO tienda.outbox (event_id, tipo, sku, canal, version, stock_objetivo)
+  SELECT 'OUT-' || gen_random_uuid()::text, 'product_updated', i.key, p.canal, i.version,
+         greatest(i.cantidad - tienda.fn_reservado(i.key), 0)
+    FROM tienda.inventario i
+    JOIN tienda.publicaciones p ON p.sku = i.key AND p.publicado
+   WHERE i.key = p_key
+  ON CONFLICT DO NOTHING;
+  GET DIAGNOSTICS v_n = ROW_COUNT;
+  RETURN v_n;
+END $$;
+
+CREATE OR REPLACE FUNCTION tienda.trg_inventario_producto_outbox() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  PERFORM tienda.fn_encolar_producto(NEW.key);
+  RETURN NULL;
+END $$;
+
+CREATE TRIGGER trg_c_inventario_producto_outbox
+  AFTER UPDATE OF item, descripcion, precio_base, precio_publicado, estado ON tienda.inventario
+  FOR EACH ROW WHEN (
+    OLD.item IS DISTINCT FROM NEW.item OR
+    OLD.descripcion IS DISTINCT FROM NEW.descripcion OR
+    OLD.precio_base IS DISTINCT FROM NEW.precio_base OR
+    OLD.precio_publicado IS DISTINCT FROM NEW.precio_publicado OR
+    OLD.estado IS DISTINCT FROM NEW.estado
+  )
+  EXECUTE FUNCTION tienda.trg_inventario_producto_outbox();
+
+CREATE OR REPLACE FUNCTION tienda.resolver_accion_manual(
+  p_event_id text,
+  p_usuario text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE tienda.outbox
+     SET accion_manual_resuelta = true,
+         accion_manual_resuelta_en = now(),
+         accion_manual_resuelta_por = coalesce(p_usuario, 'sistema'),
+         actualizado_en = now()
+   WHERE event_id = p_event_id;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'NOT_FOUND');
+  END IF;
+  RETURN jsonb_build_object('status', 'SUCCESS');
+END $$;
+
+CREATE OR REPLACE FUNCTION tienda.reintentar_outbox(
+  p_event_id text
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE tienda.outbox
+     SET estado = 'PENDING',
+         intentos = 0,
+         proxima_ejecucion = now(),
+         actualizado_en = now(),
+         ultimo_error = NULL
+   WHERE event_id = p_event_id AND estado IN ('FAILED', 'DEAD');
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'NOT_FOUND_OR_INVALID_STATE');
+  END IF;
+  RETURN jsonb_build_object('status', 'SUCCESS');
+END $$;
 
 -- ---------- 3. Eventos entrantes (webhooks) ---------------------------------------------------
 CREATE TABLE tienda.eventos_procesados (                   -- idempotencia de webhooks (ExposedProcessedEventStore)

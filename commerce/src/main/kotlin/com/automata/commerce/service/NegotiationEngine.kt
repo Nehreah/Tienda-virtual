@@ -23,8 +23,8 @@ enum class NegotiationLevel {
     L0_PUBLISHED_PRICE,
     L1_LIGHT_DISCOUNT,
     L2_MODERATE_DISCOUNT,
-    L3_HIGH_DISCOUNT,
-    L4_FLOOR_LIMIT,
+    @Deprecated("Usar counterOffer uniforme") L3_HIGH_DISCOUNT,
+    @Deprecated("Usar counterOffer uniforme") L4_FLOOR_LIMIT,
     REJECTED_BELOW_PM,
     ESCALATED_HUMAN
 }
@@ -95,54 +95,32 @@ class NegotiationEngine(
             )
         }
 
-        // Por debajo del PM: contraoferta escalonada sin revelar el piso.
-        if (offeredAmount < pm) {
-            return counterOffer(product, previousCounterOffers, customerId)
-        }
-
         // Tramos de descuento relativos al Precio Publicado (PP)
         val l1Price = calculateDiscountPrice(pp, pm, 0.05) // 5% dto sobre PP
         val l2Price = calculateDiscountPrice(pp, pm, 0.10) // 10% dto sobre PP
-        val l3Price = calculateDiscountPrice(pp, pm, 0.15) // 15% dto sobre PP
 
-        return when {
-            offeredAmount >= l1Price -> NegotiationDecision(
+        if (offeredAmount >= l1Price) {
+            return NegotiationDecision(
                 accepted     = true,
                 level        = NegotiationLevel.L1_LIGHT_DISCOUNT,
                 agreedPrice  = offeredAmount,
                 counterOffer = null,
                 message = "¡Trato hecho! Aceptamos tu propuesta por ${offeredAmount.formatFormattedCop()}."
             )
-            offeredAmount >= l2Price -> NegotiationDecision(
+        }
+
+        if (offeredAmount >= l2Price) {
+            return NegotiationDecision(
                 accepted     = true,
                 level        = NegotiationLevel.L2_MODERATE_DISCOUNT,
                 agreedPrice  = offeredAmount,
                 counterOffer = null,
                 message = "Aceptamos tu oferta especial de ${offeredAmount.formatFormattedCop()} por hoy."
             )
-            offeredAmount >= l3Price -> {
-                val counter = applyJitter(l2Price, pm, pp, customerId, 1)
-                NegotiationDecision(
-                    accepted     = false,
-                    level        = NegotiationLevel.L3_HIGH_DISCOUNT,
-                    agreedPrice  = null,
-                    counterOffer = counter,
-                    message = "Muy buen intento, pero no puedo dejarlo en eso. " +
-                              "Te propongo ${counter.formatFormattedCop()} para cerrar. ¿Lo tomamos?"
-                )
-            }
-            else -> {
-                val counter = applyJitter(l3Price, pm, pp, customerId, 2)
-                NegotiationDecision(
-                    accepted     = false,
-                    level        = NegotiationLevel.L4_FLOOR_LIMIT,
-                    agreedPrice  = null,
-                    counterOffer = counter,
-                    message = "Ese precio no me es posible, pero te puedo ofrecer " +
-                              "${counter.formatFormattedCop()} para cerrar hoy."
-                )
-            }
         }
+
+        // Cualquier oferta por debajo del umbral de aceptación (sea < PM o < L2) recibe la contraoferta del paso
+        return counterOffer(product, previousCounterOffers, customerId)
     }
 
     private fun counterOffer(product: CommercialProduct, previousCounterOffers: Int, customerId: String): NegotiationDecision {
@@ -183,8 +161,9 @@ class NegotiationEngine(
         val baseAmount = raw.amountInCop
         val maxJitter = (baseAmount * 0.03).toLong() // ±3% sobre el precio de la contraoferta
         val seed = if (customerId.isNotBlank()) (customerId + step).hashCode().toLong() else random.nextLong()
-        val deterministicJitter = if (maxJitter > 0) (seed % (maxJitter * 2)) - maxJitter else 0L
-        
+        val range = maxJitter * 2 + 1
+        val deterministicJitter = if (maxJitter > 0) Math.floorMod(seed, range) - maxJitter else 0L
+
         val adjusted = baseAmount + deterministicJitter
         // Redondeo a miles COP
         val rounded = maxOf(((adjusted + 500) / 1000) * 1000, pm.amountInCop)
@@ -205,6 +184,6 @@ class NegotiationEngine(
         val DISCOUNTS_PP = doubleArrayOf(0.05, 0.10, 0.15)
 
         /** Tras este número de contraofertas se escala a humano. */
-        const val MAX_COUNTER_OFFERS = 4
+        const val MAX_COUNTER_OFFERS = 3
     }
 }

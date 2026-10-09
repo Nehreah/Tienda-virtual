@@ -115,8 +115,9 @@ fun Route.webhookRoutes(
                         }
                     }
                 } else {
+                    var ventaExitosa = true
                     if (dbRepository != null) {
-                        dbRepository.venderUnidades(
+                        ventaExitosa = dbRepository.venderUnidades(
                             key = soldEvent.productKey,
                             quantity = soldEvent.quantity,
                             eventId = soldEvent.eventId,
@@ -125,17 +126,21 @@ fun Route.webhookRoutes(
                             orderId = soldEvent.orderId
                         )
                     }
-                    val updatedInv = synchronized(AppStore.inventory) {
-                        AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)
-                            ?.also { AppStore.inventory[keyStr] = it }
-                    }
-                    if (updatedInv != null) {
-                        antiOversellSaga.executeRetractionSaga(
-                            productKey     = soldEvent.productKey,
-                            originChannel  = "shopify",
-                            externalIdMap  = AppStore.channelMappings[keyStr] ?: emptyMap(),
-                            remainingStock = updatedInv.stockVivo
-                        )
+                    if (ventaExitosa) {
+                        val updatedInv = synchronized(AppStore.inventory) {
+                            AppStore.inventory[keyStr]?.recordSale(soldEvent.quantity)
+                                ?.also { AppStore.inventory[keyStr] = it }
+                        }
+                        if (updatedInv != null) {
+                            antiOversellSaga.executeRetractionSaga(
+                                productKey     = soldEvent.productKey,
+                                originChannel  = "shopify",
+                                externalIdMap  = AppStore.channelMappings[keyStr] ?: emptyMap(),
+                                remainingStock = updatedInv.stockVivo
+                            )
+                        }
+                    } else {
+                        logger.warn("Venta rechazada por BD (posible duplicado de orderId ${soldEvent.orderId}). No se descuenta stock en memoria.")
                     }
                 }
             }

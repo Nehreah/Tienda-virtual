@@ -111,19 +111,55 @@ class InboundMessagePipeline(
         now: Instant = Clock.System.now()
     ): PipelineOutcome = withContext(Dispatchers.IO) {
         val trimmed = text.trim()
+        val ch = channel.lowercase()
+        val convId = "$ch:$senderId"
+
+        // Fase 2: El webhook inserta el mensaje del cliente de forma idempotente ANTES de todo.
+        conversations.registrarMensajeCliente(convId, messageId, trimmed)
+
+        // Verificamos el estado actual
+        val conv = conversations.find(ch, senderId) ?: Conversation(
+            conversationId = convId,
+            customerPhoneOrId = senderId,
+            channel = ch,
+            lastUpdated = now
+        )
+
+        // Fase 2: Compuerta humana. Si el operador tiene el control, el bot calla y NO gasta LLM.
+        if (conv.atencion == "HUMANO") {
+            return@withContext PipelineOutcome(
+                conversation = conv,
+                reply = null,
+                productName = productNameOf(conv),
+                amountCop = conv.agreedPriceCop,
+                dealLabel = label(conv)
+            )
+        }
+
         val intent: ParsedCustomerIntent? =
             if (trimmed.isEmpty()) null else llm.parseIntent(trimmed, catalog.knownKeys())
 
-        val convId = "${channel.lowercase()}:$senderId"
         val outcome = lockFor(convId).withLock {
-            decide(channel, senderId, messageId, trimmed, intent, now)
+            decide(ch, senderId, messageId, trimmed, intent, now, conv)
         }
 
         val reply = outcome.reply ?: return@withContext outcome
-        val sent = router.sendMessage(channel, senderId, reply)
-        if (sent !is PortResult.Ok) {
-            logger.warn("No se pudo responder en [$channel] a $senderId: $sent")
+
+        // Fase 2: Compuerta en BD para evitar carrera al enviar. 
+        // Si justo cambió a HUMANO, esto devuelve null y no enviamos.
+        val dbMsgId = conversations.registrarMensajeBot(convId, reply)
+            ?: return@withContext outcome.copy(reply = null)
+
+        val sent = router.sendMessage(ch, senderId, reply)
+        
+        if (sent is PortResult.Ok) {
+            conversations.marcarEnvio(dbMsgId, "ENVIADO", canalMsgId = sent.value)
+        } else {
+            logger.warn("No se pudo responder en [$ch] a $senderId: $sent")
+            val errorMsg = if (sent is PortResult.Error) sent.error.message else "Desconocido"
+            conversations.marcarEnvio(dbMsgId, "FALLO", error = errorMsg)
         }
+        
         outcome.copy(sendResult = sent)
     }
 
@@ -169,15 +205,11 @@ class InboundMessagePipeline(
         messageId: String,
         text: String,
         intent: ParsedCustomerIntent?,
-        now: Instant
+        now: Instant,
+        preloadedConv: Conversation
     ): PipelineOutcome {
         val ch = channel.lowercase()
-        var conv = conversations.find(ch, senderId) ?: Conversation(
-            conversationId = "$ch:$senderId",
-            customerPhoneOrId = senderId,
-            channel = ch,
-            lastUpdated = now
-        )
+        var conv = preloadedConv
         if (conv.state == ConversationState.CLOSED) {
             conv = conv.copy(state = ConversationState.IDLE)
         }

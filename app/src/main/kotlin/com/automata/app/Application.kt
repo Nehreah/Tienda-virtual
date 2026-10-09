@@ -75,15 +75,22 @@ import kotlin.system.exitProcess
 private val logger = LoggerFactory.getLogger("com.automata.app.Application")
 
 object AppStore {
-    val products = mutableMapOf<String, CommercialProduct>()
-    val inventory = mutableMapOf<String, OperationalInventory>()
-    val channelMappings = mutableMapOf<String, MutableMap<String, String>>()
-    val apiIntegrations = mutableListOf<ApiIntegrationStatus>()
-    val chatDeals = mutableListOf<ChatDealLog>()
+    val state = com.automata.app.state.CatalogState()
 
-    /** true solo si DatabaseFactory.connect() terminó sin error. */
-    @Volatile var databaseConnected: Boolean = false
-    @Volatile var lastReconciliationReport: ReconciliationReport? = null
+    val products get() = state.productsMap
+    val inventory get() = state.inventoryMap
+    val channelMappings get() = state.channelMappingsMap
+    val apiIntegrations get() = state.apiIntegrationsList
+    /** Lista de negociaciones recientes (simulador + canal real). Delegado seguro al estado central. */
+    val chatDeals: MutableList<com.automata.app.dashboard.ChatDealLog> get() = state.chatDealsList
+
+    var databaseConnected: Boolean
+        get() = state.databaseConnected
+        set(value) { state.databaseConnected = value }
+
+    var lastReconciliationReport: ReconciliationReport?
+        get() = state.lastReconciliationReport
+        set(value) { state.lastReconciliationReport = value }
 
     /**
      * Estado REAL de las integraciones, calculado desde la configuración (nunca inventado).
@@ -474,6 +481,8 @@ fun Application.module() {
         sociosRoutes(dashboardGuard, socioService, socioRepo)
         inversionRoutes(dashboardGuard, inversionRepo, dbRepository ?: InMemoryInventarioRepository(), socioRepo)
         metricasRoutes(dashboardGuard, metricasService, dbRepository ?: InMemoryInventarioRepository(), ventaRepo, socioRepo)
+        ventasRoutes(dashboardGuard)
+        chatRoutes(dashboardGuard, channelRouter)
         publicRoutes()
     }
 }

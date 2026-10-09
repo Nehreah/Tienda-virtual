@@ -37,5 +37,6 @@ data class Conversation(
     val counterOfferCount: Int = 0,         // contraofertas ya hechas al cliente por el producto activo
     val pendingCounterCop: Long? = null,    // última contraoferta que el cliente aún no aceptó (siempre un precio de venta)
     val pendingCounterAt: Instant? = null,  // Fase 3.4: cuándo se emitió la contraoferta (vence a los 30 min)
-    val lastUpdated: Instant = Clock.System.now()
+    val lastUpdated: Instant = Clock.System.now(),
+    val atencion: String = "BOT"            // Fase 2: modo de atención (BOT o HUMANO)
 )

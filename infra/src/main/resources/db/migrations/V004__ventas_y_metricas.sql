@@ -45,6 +45,14 @@ CREATE TABLE tienda.ventas (
   cliente_id       text    REFERENCES tienda.cliente(cliente_id) ON UPDATE CASCADE ON DELETE SET NULL,
   anulada_en       timestamptz,
   anulada_motivo   text,
+  estado_logistico text    NOT NULL DEFAULT 'SIN_ENVIO' CHECK (estado_logistico IN ('SIN_ENVIO', 'PENDIENTE', 'PENDIENTE_ENVIO', 'EN_PREPARACION', 'ENVIADO', 'ENTREGADO', 'CANCELADO')),
+  fecha_envio      timestamptz,
+  fecha_entrega    timestamptz,
+  guia_envio       text,
+  transportadora   text,
+  nota             text,
+  canal_detalle    text,
+  sync_version     bigint  NOT NULL DEFAULT 1,
   created_at       timestamptz NOT NULL DEFAULT now(),
   updated_at       timestamptz NOT NULL DEFAULT now()
 );
@@ -498,6 +506,204 @@ SELECT c.cliente_id, c.canal, c.display, c.telefono, c.email, c.consentimiento_e
   LEFT JOIN tienda.v_ventas v ON v.cliente_id = c.cliente_id
  GROUP BY c.cliente_id;
 
+-- ---------- 6b. Funciones de Ventas Manuales y Logística ---------------------------------------
+CREATE OR REPLACE FUNCTION tienda.registrar_venta_manual(
+  p_key text,
+  p_cantidad integer,
+  p_precio_unit bigint,
+  p_canal text,
+  p_canal_detalle text DEFAULT NULL,
+  p_fecha date DEFAULT NULL,
+  p_order_id text DEFAULT NULL,
+  p_idempotency_key text DEFAULT NULL,
+  p_estado_logistico text DEFAULT 'SIN_ENVIO',
+  p_guia_envio text DEFAULT NULL,
+  p_transportadora text DEFAULT NULL,
+  p_nota text DEFAULT NULL,
+  p_usuario text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_res jsonb;
+  v_venta_id bigint;
+  v_canal text := lower(btrim(p_canal));
+  v_version bigint;
+BEGIN
+  IF v_canal IS NULL OR v_canal NOT IN ('shopify', 'facebook_marketplace', 'whatsapp', 'instagram', 'messenger', 'presencial', 'otro') THEN
+    RETURN jsonb_build_object('status', 'DATOS_INVALIDOS', 'message', 'Canal inválido');
+  END IF;
+
+  IF v_canal = 'shopify' AND (p_order_id IS NULL OR btrim(p_order_id) = '') THEN
+    RETURN jsonb_build_object('status', 'DATOS_INVALIDOS', 'message', 'Canal shopify requiere número de pedido (order_id)');
+  END IF;
+
+  IF v_canal = 'otro' AND (p_canal_detalle IS NULL OR btrim(p_canal_detalle) = '') THEN
+    RETURN jsonb_build_object('status', 'DATOS_INVALIDOS', 'message', 'Canal otro requiere canal_detalle');
+  END IF;
+
+  SELECT version INTO v_version FROM tienda.inventario WHERE key = p_key;
+
+  v_res := tienda.registrar_venta_linea(
+    p_key => p_key,
+    p_cantidad => p_cantidad,
+    p_precio_unit => p_precio_unit,
+    p_canal => v_canal,
+    p_fecha => p_fecha,
+    p_origen => 'manual',
+    p_event_id => p_idempotency_key,
+    p_order_id => p_order_id,
+    p_usuario => p_usuario
+  );
+
+  IF v_res->>'status' = 'SUCCESS' OR v_res->>'status' = 'ALREADY_PROCESSED' THEN
+    v_venta_id := (v_res->>'venta_id')::bigint;
+    PERFORM set_config('app.venta_interna', 'on', true);
+    UPDATE tienda.ventas
+       SET estado_logistico = coalesce(p_estado_logistico, 'SIN_ENVIO'),
+           guia_envio = p_guia_envio,
+           transportadora = p_transportadora,
+           nota = p_nota,
+           canal_detalle = p_canal_detalle,
+           sync_version = coalesce(v_version, 1),
+           updated_at = now()
+     WHERE venta_id = v_venta_id;
+    PERFORM set_config('app.venta_interna', '', true);
+  END IF;
+
+  RETURN v_res;
+END $$;
+
+CREATE OR REPLACE FUNCTION tienda.actualizar_logistica_venta(
+  p_venta_id bigint,
+  p_estado_logistico text,
+  p_guia_envio text DEFAULT NULL,
+  p_transportadora text DEFAULT NULL,
+  p_nota text DEFAULT NULL,
+  p_usuario text DEFAULT NULL
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_estado text := upper(btrim(p_estado_logistico));
+  v_actual text;
+BEGIN
+  IF v_estado NOT IN ('SIN_ENVIO', 'PENDIENTE', 'PENDIENTE_ENVIO', 'EN_PREPARACION', 'ENVIADO', 'ENTREGADO', 'CANCELADO') THEN
+    RETURN jsonb_build_object('status', 'DATOS_INVALIDOS', 'message', 'Estado logístico inválido');
+  END IF;
+
+  SELECT estado_logistico INTO v_actual FROM tienda.ventas WHERE venta_id = p_venta_id AND anulada_en IS NULL;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'VENTA_NO_ENCONTRADA');
+  END IF;
+
+  PERFORM set_config('app.venta_interna', 'on', true);
+  UPDATE tienda.ventas
+     SET estado_logistico = v_estado,
+         guia_envio = coalesce(p_guia_envio, guia_envio),
+         transportadora = coalesce(p_transportadora, transportadora),
+         nota = coalesce(p_nota, nota),
+         fecha_envio = CASE WHEN v_estado IN ('ENVIADO', 'ENTREGADO') AND fecha_envio IS NULL THEN now() ELSE fecha_envio END,
+         fecha_entrega = CASE WHEN v_estado = 'ENTREGADO' AND fecha_entrega IS NULL THEN now() ELSE fecha_entrega END,
+         updated_at = now()
+   WHERE venta_id = p_venta_id;
+  PERFORM set_config('app.venta_interna', '', true);
+
+  RETURN jsonb_build_object('status', 'SUCCESS', 'venta_id', p_venta_id, 'estado_logistico', v_estado);
+END $$;
+
+CREATE OR REPLACE FUNCTION tienda.asignar_reparto_venta(
+  p_venta_id bigint,
+  p_porcentajes jsonb
+) RETURNS jsonb LANGUAGE plpgsql AS $$
+DECLARE
+  v_v tienda.ventas%ROWTYPE;
+  v_suma numeric(7,2) := 0;
+  elem record;
+  v_n_reparto integer := 0;
+  v_prev_int text := coalesce(current_setting('app.venta_interna', true), '');
+BEGIN
+  SELECT * INTO v_v FROM tienda.ventas WHERE venta_id = p_venta_id AND anulada_en IS NULL FOR UPDATE;
+  IF NOT FOUND THEN
+    RETURN jsonb_build_object('status', 'VENTA_NO_ENCONTRADA');
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM tienda.venta_reparto WHERE venta_id = p_venta_id) THEN
+    RETURN jsonb_build_object('status', 'ALREADY_PROCESSED', 'message', 'La venta ya tiene reparto asignado');
+  END IF;
+
+  FOR elem IN SELECT * FROM jsonb_to_recordset(p_porcentajes) AS (socio_id bigint, pct numeric) LOOP
+    IF NOT EXISTS (SELECT 1 FROM tienda.socio WHERE id = elem.socio_id AND activo = true) THEN
+      RETURN jsonb_build_object('status', 'SOCIO_INVALIDO', 'socio_id', elem.socio_id);
+    END IF;
+    v_suma := v_suma + elem.pct;
+  END LOOP;
+
+  IF round(v_suma, 2) <> 100.00 THEN
+    RETURN jsonb_build_object('status', 'SUMA_INVALIDA', 'suma', v_suma);
+  END IF;
+
+  PERFORM set_config('app.venta_interna', 'on', true);
+
+  WITH b AS (
+    SELECT elem.socio_id, elem.pct, (v_v.ingresos::numeric * elem.pct / 100.0) AS exacto_ing, (v_v.costo_total::numeric * elem.pct / 100.0) AS exacto_costo
+      FROM jsonb_to_recordset(p_porcentajes) AS elem(socio_id bigint, pct numeric)
+  ),
+  f AS (
+    SELECT socio_id, pct,
+           floor(exacto_ing)::bigint AS piso_ing, exacto_ing - floor(exacto_ing) AS resto_ing,
+           floor(exacto_costo)::bigint AS piso_costo, exacto_costo - floor(exacto_costo) AS resto_costo
+      FROM b
+  ),
+  faltan_ing AS (SELECT v_v.ingresos - coalesce(sum(piso_ing), 0) AS n FROM f),
+  faltan_costo AS (SELECT v_v.costo_total - coalesce(sum(piso_costo), 0) AS n FROM f),
+  o AS (
+    SELECT f.*,
+           row_number() OVER (ORDER BY resto_ing DESC, socio_id) AS pos_ing,
+           row_number() OVER (ORDER BY resto_costo DESC, socio_id) AS pos_costo
+      FROM f
+  )
+  INSERT INTO tienda.venta_reparto (venta_id, key, socio_id, pct, inversion, ingresos, ganancia)
+  SELECT p_venta_id, v_v.key, o.socio_id, o.pct,
+         o.piso_costo + CASE WHEN o.pos_costo <= (SELECT n FROM faltan_costo) THEN 1 ELSE 0 END,
+         o.piso_ing + CASE WHEN o.pos_ing <= (SELECT n FROM faltan_ing) THEN 1 ELSE 0 END,
+         (o.piso_ing + CASE WHEN o.pos_ing <= (SELECT n FROM faltan_ing) THEN 1 ELSE 0 END) -
+         (o.piso_costo + CASE WHEN o.pos_costo <= (SELECT n FROM faltan_costo) THEN 1 ELSE 0 END)
+    FROM o;
+
+  GET DIAGNOSTICS v_n_reparto = ROW_COUNT;
+
+  PERFORM set_config('app.venta_interna', v_prev_int, true);
+
+  RETURN jsonb_build_object('status', 'SUCCESS', 'venta_id', p_venta_id, 'filas_reparto', v_n_reparto);
+END $$;
+
+-- Vistas adicionales de sincronización y logística
+CREATE OR REPLACE VIEW tienda.v_venta_sync AS
+SELECT v.venta_id, v.key, v.fecha_venta, v.canal, v.origen, v.estado_logistico, v.sync_version,
+       o.event_id, o.canal AS canal_destino, o.estado AS estado_outbox, o.stock_objetivo,
+       p.stock_publicado, o.ultimo_error, o.accion_manual_requerida, o.accion_manual_tipo, o.accion_manual_resuelta
+  FROM tienda.ventas v
+  LEFT JOIN tienda.publicaciones p ON p.sku = v.key
+  LEFT JOIN tienda.outbox o ON o.sku = v.key AND o.canal = p.canal AND o.version = v.sync_version
+ WHERE v.anulada_en IS NULL;
+
+CREATE OR REPLACE VIEW tienda.v_ventas_logistica AS
+SELECT coalesce(v.canal, 'sin_canal') AS canal,
+       v.estado_logistico,
+       count(*) AS total_ventas,
+       sum(v.cantidad) AS total_unidades,
+       sum(v.ingresos) AS total_ingresos,
+       sum(v.ganancia_neta) AS total_ganancia
+  FROM tienda.v_ventas v
+ GROUP BY 1, 2;
+
+CREATE OR REPLACE VIEW tienda.v_acciones_manuales_pendientes AS
+SELECT o.event_id, o.sku, o.canal, o.version, o.stock_objetivo, o.accion_manual_tipo, o.accion_manual_detalle, o.creado_en
+  FROM tienda.outbox o
+ WHERE o.accion_manual_requerida = true AND o.accion_manual_resuelta = false;
+
+CREATE OR REPLACE VIEW tienda.v_ventas_sin_reparto AS
+SELECT v.*
+  FROM tienda.v_ventas v
+ WHERE NOT EXISTS (SELECT 1 FROM tienda.venta_reparto vr WHERE vr.venta_id = v.venta_id);
+
 -- ---------- 7. Verificación de integridad (dashboard) -----------------------------------------
 CREATE OR REPLACE FUNCTION tienda.verificar_integridad()
 RETURNS TABLE (chequeo text, cantidad bigint, detalle text) LANGUAGE sql STABLE AS $$
@@ -545,7 +751,8 @@ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'app_user') THEN
     EXECUTE 'GRANT SELECT ON tienda.v_stock, tienda.v_reparto_pendiente, tienda.v_ventas, tienda.v_ventas_detalle, '
          || 'tienda.v_resumen_mensual_socio, tienda.v_rendimiento_tipo, tienda.v_periodo_tipo, '
-         || 'tienda.v_resumen_canal, tienda.v_cliente_resumen TO app_user';
+         || 'tienda.v_resumen_canal, tienda.v_cliente_resumen, tienda.v_venta_sync, tienda.v_ventas_logistica, '
+         || 'tienda.v_acciones_manuales_pendientes, tienda.v_ventas_sin_reparto TO app_user';
   END IF;
   IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
     EXECUTE 'REVOKE ALL ON ALL TABLES IN SCHEMA tienda FROM anon';

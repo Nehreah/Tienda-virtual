@@ -17,7 +17,7 @@ class CatalogState {
     private val _products = ConcurrentHashMap<String, CommercialProduct>()
     private val _inventory = ConcurrentHashMap<String, OperationalInventory>()
     private val _channelMappings = ConcurrentHashMap<String, Map<String, String>>()
-    private val _chatDeals = ConcurrentHashMap<String, ChatDealLog>()
+    private val _chatDeals = java.util.Collections.synchronizedList(mutableListOf<ChatDealLog>())
     private val _apiIntegrations = java.util.Collections.synchronizedList(mutableListOf<ApiIntegrationStatus>())
 
     @Volatile var databaseConnected: Boolean = false
@@ -35,6 +35,9 @@ class CatalogState {
     fun putInventory(key: String, inv: OperationalInventory) { _inventory[key] = inv }
     fun removeInventory(key: String): OperationalInventory? = _inventory.remove(key)
     fun getInventorySnapshot(): Map<String, OperationalInventory> = HashMap(_inventory)
+    fun updateInventory(key: String, transform: (OperationalInventory?) -> OperationalInventory?): OperationalInventory? {
+        return _inventory.compute(key) { _, current -> transform(current) }
+    }
 
     // Accessors for channel mappings
     fun getChannelMapping(sku: String): Map<String, String> = _channelMappings[sku] ?: emptyMap()
@@ -49,19 +52,21 @@ class CatalogState {
 
     // Accessors for chat deals
     fun addOrUpdateDeal(deal: ChatDealLog) {
-        _chatDeals[deal.id] = deal
-    }
-    fun getDeal(id: String): ChatDealLog? = _chatDeals[id]
-    fun getChatDealsSnapshot(): List<ChatDealLog> = _chatDeals.values.sortedByDescending { it.id }
-
-    // Accessors for API integrations
-    fun setApiIntegrations(list: List<ApiIntegrationStatus>) {
-        synchronized(_apiIntegrations) {
-            _apiIntegrations.clear()
-            _apiIntegrations.addAll(list)
+        synchronized(_chatDeals) {
+            _chatDeals.removeAll { it.id == deal.id }
+            _chatDeals.add(0, deal)
+            if (_chatDeals.size > 100) {
+                _chatDeals.subList(100, _chatDeals.size).clear()
+            }
         }
     }
-    fun getApiIntegrationsSnapshot(): List<ApiIntegrationStatus> {
-        return synchronized(_apiIntegrations) { _apiIntegrations.toList() }
-    }
+    fun getDeal(id: String): ChatDealLog? = synchronized(_chatDeals) { _chatDeals.firstOrNull { it.id == id } }
+    fun getChatDealsSnapshot(): List<ChatDealLog> = synchronized(_chatDeals) { _chatDeals.toList() }
+
+    // Direct access map delegates
+    val productsMap: ConcurrentHashMap<String, CommercialProduct> get() = _products
+    val inventoryMap: ConcurrentHashMap<String, OperationalInventory> get() = _inventory
+    val channelMappingsMap: ConcurrentHashMap<String, Map<String, String>> get() = _channelMappings
+    val apiIntegrationsList: MutableList<ApiIntegrationStatus> get() = _apiIntegrations
+    val chatDealsList: MutableList<ChatDealLog> get() = _chatDeals
 }

@@ -81,6 +81,25 @@ class OutboxWorker(
                 continue
             }
 
+            val pubRow = transaction {
+                PublicacionesTable.select {
+                    (PublicacionesTable.sku eq entry.sku) and (PublicacionesTable.canal eq entry.channel)
+                }.firstOrNull()
+            }
+
+            if (pubRow == null || !pubRow[PublicacionesTable.publicado]) {
+                transaction {
+                    OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
+                        row[OutboxTable.status] = "SKIPPED_NOT_PUBLISHED"
+                        row[OutboxTable.errorMessage] = "El producto ${entry.sku} no está publicado en el canal ${entry.channel}"
+                    }
+                }
+                processedCount++
+                continue
+            }
+
+            val externalIdToUse = pubRow[PublicacionesTable.externalInventoryId] ?: pubRow[PublicacionesTable.externalId]
+
             val targetAdapters = if (entry.channel.equals("ALL", ignoreCase = true)) {
                 adapters
             } else {
@@ -99,46 +118,53 @@ class OutboxWorker(
 
             try {
                 val productKey = ProductKey(entry.sku)
+                var isNotImplemented = false
                 var allSuccess = true
                 var lastErrorMessage: String? = null
 
                 for (adapter in targetAdapters) {
-                    val result = adapter.setStock(productKey, entry.sku, entry.stockObjetivo, entry.version)
+                    val result = adapter.setStock(productKey, externalIdToUse, entry.stockObjetivo, entry.version)
                     if (result is PortResult.Failure) {
                         val errorMsg = when (result) {
-                            is PortResult.Permanent -> "${result.code}: ${result.detail}"
+                            is PortResult.Permanent -> {
+                                if (result.code.equals("NO_IMPLEMENTADO", ignoreCase = true) || result.detail.contains("NO_IMPLEMENTADO", ignoreCase = true)) {
+                                    isNotImplemented = true
+                                }
+                                "${result.code}: ${result.detail}"
+                            }
                             is PortResult.Transient -> result.cause
                             is PortResult.RateLimited -> "Rate limited for ${result.retryAfterSeconds}s"
                             PortResult.AuthExpired -> "Auth expired"
                         }
-                        if (!errorMsg.contains("NO_IMPLEMENTADO", ignoreCase = true)) {
+                        if (isNotImplemented) {
                             allSuccess = false
                             lastErrorMessage = errorMsg
+                            break
                         }
+                        allSuccess = false
+                        lastErrorMessage = errorMsg
                     }
                 }
 
-                if (allSuccess) {
+                if (isNotImplemented) {
+                    transaction {
+                        OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
+                            row[OutboxTable.status] = "SKIPPED_NOT_IMPLEMENTED"
+                            row[OutboxTable.errorMessage] = lastErrorMessage
+                        }
+                    }
+                    processedCount++
+                } else if (allSuccess) {
                     transaction {
                         OutboxTable.update({ OutboxTable.eventId eq entry.eventId }) { row ->
                             row[OutboxTable.status] = "SENT"
                         }
                         for (adapter in targetAdapters) {
-                            val count = PublicacionesTable.update({
+                            PublicacionesTable.update({
                                 (PublicacionesTable.sku eq entry.sku) and (PublicacionesTable.canal eq adapter.channelName)
                             }) { row ->
                                 row[PublicacionesTable.stockPublicado] = entry.stockObjetivo
                                 row[PublicacionesTable.ultimaSincronizacion] = Instant.now()
-                            }
-                            if (count == 0) {
-                                PublicacionesTable.insert { row ->
-                                    row[PublicacionesTable.sku] = entry.sku
-                                    row[PublicacionesTable.canal] = adapter.channelName
-                                    row[PublicacionesTable.externalId] = entry.sku
-                                    row[PublicacionesTable.publicado] = true
-                                    row[PublicacionesTable.stockPublicado] = entry.stockObjetivo
-                                    row[PublicacionesTable.ultimaSincronizacion] = Instant.now()
-                                }
                             }
                         }
                     }

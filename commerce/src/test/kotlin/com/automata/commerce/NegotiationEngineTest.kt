@@ -45,9 +45,9 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `counter offers for steps 0 to 3 have valid counter and never exceed PM`() {
-        // Con MAX_COUNTER_OFFERS = 4, pasos 0-3 producen contraoferta; paso 4+ escala a humano.
-        for (step in 0..3) {
+    fun `counter offers for steps 0 to 2 have valid counter and step 3 escalates to human`() {
+        // Con MAX_COUNTER_OFFERS = 3, pasos 0-2 producen contraoferta; paso 3+ escala a humano.
+        for (step in 0..2) {
             val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = step)
             assertFalse(d.accepted, "Paso $step no deberia aceptar")
             assertNotNull(d.counterOffer, "Paso $step deberia tener contraoferta")
@@ -56,17 +56,16 @@ class NegotiationEngineTest {
             assertFalse(d.message.contains("95.000"), "El texto del paso $step revela el PM")
             assertFalse(d.isEscalatedToHuman, "Paso $step no deberia escalar a humano")
         }
-        // Paso 4: escala a humano (Fase 3.2)
-        val escalated = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 4)
-        assertTrue(escalated.isEscalatedToHuman, "Paso 4 debe escalar a humano")
+        // Paso 3: escala a humano
+        val escalated = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 3)
+        assertTrue(escalated.isEscalatedToHuman, "Paso 3 debe escalar a humano")
         assertNull(escalated.counterOffer, "Al escalar no hay contraoferta")
     }
 
     @Test
-    fun `offer exactly at PM falls into L4 and is NOT auto-accepted (Fase 3 3)`() {
-        // Fase 3.3: L4 nunca acepta al valor exacto para no revelar el PM por biseccion.
+    fun `offer exactly at PM falls into counter offer and is NOT auto-accepted`() {
         val decision = engine.evaluateOffer(sampleProduct, Money.of(95000))
-        assertFalse(decision.accepted, "Oferta exacta en PM no se acepta en L4 (Fase 3.3)")
+        assertFalse(decision.accepted, "Oferta exacta en PM no se acepta")
         assertNotNull(decision.counterOffer)
         assertTrue(decision.counterOffer!! > sampleProduct.minimumPrice)
         assertFalse(decision.message.contains("95.000"), "No debe revelar el PM exacto")
@@ -74,7 +73,7 @@ class NegotiationEngineTest {
 
     @Test
     fun `offer clearly above l2 threshold is accepted at L2`() {
-        // l2Price = PP - 50% * (PP - PM) = 120000 - 12500 = 107500
+        // l2Price = PP - 10% * PP = 120000 - 12000 = 108000
         val decision = engine.evaluateOffer(sampleProduct, Money.of(108000))
         assertTrue(decision.accepted)
         assertEquals(NegotiationLevel.L2_MODERATE_DISCOUNT, decision.level)
@@ -107,10 +106,10 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `invariant test counter offers are never below PM for steps 0 to 3`() {
-        // Solo pasos 0-3; paso 4+ escala a humano sin contraoferta (Fase 3.2).
+    fun `invariant test counter offers are never below PM for steps 0 to 2`() {
+        // Solo pasos 0-2; paso 3+ escala a humano sin contraoferta.
         for (offerCop in listOf(0L, 1000L, 50000L, 94999L)) {
-            for (step in 0..3) {
+            for (step in 0..2) {
                 val d = engine.evaluateOffer(sampleProduct, Money.of(offerCop), step)
                 assertFalse(d.accepted)
                 assertFalse(d.isEscalatedToHuman, "Paso $step no deberia escalar")
@@ -124,8 +123,8 @@ class NegotiationEngineTest {
     }
 
     @Test
-    fun `escalation happens exactly at MAX_COUNTER_OFFERS (Fase 3 2)`() {
-        val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 4)
+    fun `escalation happens exactly at MAX_COUNTER_OFFERS`() {
+        val d = engine.evaluateOffer(sampleProduct, Money.of(50000), previousCounterOffers = 3)
         assertTrue(d.isEscalatedToHuman)
         assertEquals(NegotiationLevel.ESCALATED_HUMAN, d.level)
         assertFalse(d.accepted)
