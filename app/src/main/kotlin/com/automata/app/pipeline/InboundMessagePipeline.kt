@@ -156,7 +156,13 @@ class InboundMessagePipeline(
             conversations.marcarEnvio(dbMsgId, "ENVIADO", canalMsgId = sent.value)
         } else {
             logger.warn("No se pudo responder en [$ch] a $senderId: $sent")
-            val errorMsg = if (sent is PortResult.Error) sent.error.message else "Desconocido"
+            val errorMsg = when (sent) {
+                is PortResult.Transient  -> sent.cause
+                is PortResult.Permanent  -> "${sent.code}: ${sent.detail}"
+                is PortResult.RateLimited -> "Rate limited por ${sent.retryAfterSeconds}s"
+                PortResult.AuthExpired   -> "Token expirado"
+                else                     -> "Error desconocido"
+            }
             conversations.marcarEnvio(dbMsgId, "FALLO", error = errorMsg)
         }
         
