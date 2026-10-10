@@ -1,8 +1,0 @@
-.git
-.gradle
-build
-.idea
-*.xlsx
-.env
-.DS_Store
-*.log

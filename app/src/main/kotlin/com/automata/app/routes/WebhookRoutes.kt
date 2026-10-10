@@ -26,7 +26,40 @@ import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("WebhookRoutes")
 
+private fun channelDisplayName(channel: String): String = when (channel.lowercase()) {
+    "whatsapp" -> "WhatsApp"
+    "instagram" -> "Instagram DM"
+    "messenger" -> "Messenger"
+    else -> channel
+}
 
+private fun recordDeal(outcome: PipelineOutcome) {
+    val conv = outcome.conversation
+    val state = when (conv.state) {
+        ConversationState.PAID_CONFIRMED -> DealState.PENDIENTE_ENVIO
+        ConversationState.CLOSED -> DealState.CANCELADO
+        else -> DealState.EN_NEGOCIACION
+    }
+    val deal = ChatDealLog(
+        id = conv.conversationId,
+        customer = conv.customerPhoneOrId,
+        channel = conv.channel,
+        channelDisplayName = channelDisplayName(conv.channel),
+        productName = outcome.productName ?: "—",
+        offeredPrice = Money.of(outcome.amountCop ?: 0L),
+        dealState = state,
+        dealStateLabel = outcome.dealLabel,
+        timestamp = java.time.LocalTime.now().withSecond(0).withNano(0).toString(),
+        productKey = conv.activeProductKey?.value ?: ""
+    )
+    synchronized(AppStore.chatDeals) {
+        AppStore.chatDeals.removeAll { it.id == deal.id }
+        AppStore.chatDeals.add(0, deal)
+        if (AppStore.chatDeals.size > 100) {
+            AppStore.chatDeals.subList(100, AppStore.chatDeals.size).clear()
+        }
+    }
+}
 
 fun Route.webhookRoutes(
     shopifyWebhookHandler: ShopifyWebhookHandler,
@@ -170,7 +203,7 @@ fun Route.webhookRoutes(
                 // Modo sin BD: procesar en segundo plano en memoria
                 pipelineScope.launch {
                     try {
-                        AppStore.recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
+                        recordDeal(inboundPipeline.handle(event.channel, event.senderId, event.messageId, event.text))
                         processedEvents.markDone(event.channel, event.messageId)
                     } catch (e: CancellationException) {
                         processedEvents.markFailed(event.channel, event.messageId, "Cancelled")

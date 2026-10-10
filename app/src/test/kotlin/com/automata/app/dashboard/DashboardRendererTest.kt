@@ -33,4 +33,23 @@ class DashboardRendererTest {
         assertFalse(html.contains("onmouseover=\"alert(2)"), "el atributo data-channel se pudo romper")
         assertTrue(html.contains("&lt;img src=x onerror=alert(1)&gt;"))
     }
+    @Test
+    fun `dashboard uses local scripts without inline javascript or third party CDNs`() {
+        val html = DashboardRenderer.renderDashboardPage(
+            products = emptyList(),
+            inventoryMap = emptyMap(),
+            channelStatuses = emptyList(),
+            apiIntegrations = emptyList(),
+            chatDeals = emptyList()
+        )
+
+        assertTrue(html.contains("/static/theme-init.js"))
+        assertTrue(html.contains("/static/htmx-lite.js"))
+        assertTrue(html.contains("/static/dashboard.js"))
+        assertFalse(Regex("<script\\s*>" , RegexOption.IGNORE_CASE).containsMatchIn(html),
+            "no deben quedar scripts inline en el HTML del dashboard")
+        assertFalse(html.contains("unpkg.com"))
+        assertFalse(html.contains("cdn.tailwindcss.com"))
+    }
+
 }

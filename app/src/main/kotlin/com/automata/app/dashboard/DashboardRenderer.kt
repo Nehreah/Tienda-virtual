@@ -19,9 +19,6 @@ import java.util.Locale
  */
 object DashboardRenderer {
 
-    // htmx servido localmente desde /static/ — sin CDN externo, compatible con CSP 'self'.
-    private const val HTMX_SRC = "/static/htmx.min.js"
-
     /** Canales conocidos. Cualquier otro valor se agrupa como "simulador". */
     private val CHANNEL_LABELS = linkedMapOf(
         "whatsapp" to "WhatsApp",
@@ -41,15 +38,14 @@ object DashboardRenderer {
     private const val ICON_MOON = """<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>"""
     private const val ICON_MENU = """<path d="M4 6h16M4 12h16M4 18h16"/>"""
     private const val ICON_INFO = """<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>"""
-    private const val ICON_PEOPLE = """<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>"""
 
     fun renderDashboardPage(
         products: List<CommercialProduct>,
         inventoryMap: Map<String, OperationalInventory>,
         channelStatuses: List<ChannelListingStatus>,
         apiIntegrations: List<ApiIntegrationStatus>,
-        chatDeals: List<ChatDealLog>
-        // S-4: Token CSRF eliminado (código muerto). La defensa real es OriginGuard (comprobación de Origin/Referer).
+        chatDeals: List<ChatDealLog>,
+        csrfToken: String = ""
     ): String {
         val totalProducts = products.size
         val readyForShopify = channelStatuses.count { it.channel == "shopify" && it.isPublished }
@@ -95,6 +91,11 @@ object DashboardRenderer {
             setupProgress >= 25 -> 2
             else -> 1
         }
+
+        // Token CSRF: se incluye en formularios (campo oculto) y en las peticiones htmx (cabecera).
+        val csrfInput = if (csrfToken.isNotBlank()) {
+            """<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">"""
+        } else ""
 
         // Filas para la tabla de Productos
         val productRowsHtml = products.joinToString("\n") { p ->
@@ -183,6 +184,7 @@ object DashboardRenderer {
                 """
                 <form method="POST" action="/api/confirmar-pago" class="inline-form js-confirm-pago" data-customer="${escapeHtml(chat.customer)}">
                     <input type="hidden" name="dealId" value="${escapeHtml(chat.id)}">
+                    $csrfInput
                     <button type="submit" class="btn btn-primary btn-sm">✔ Confirmar pago</button>
                 </form>
                 """
@@ -275,10 +277,10 @@ object DashboardRenderer {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
-    <!-- S-4: csrf-token eliminado — la defensa CSRF es OriginGuard (Origin/Referer) -->
+    <meta name="csrf-token" content="${escapeHtml(csrfToken)}">
     <title>Tienda Virtual Multicanal · Commerce Control</title>
-    <script src="/static/theme-init.js"></script>
-    <script src="$HTMX_SRC" defer></script>
+    <script src="/static/theme-init.js" defer></script>
+    <script src="/static/htmx-lite.js" defer></script>
     <style>
         /* ================= Tokens ================= */
         :root {
@@ -383,6 +385,51 @@ object DashboardRenderer {
         .brand-sub { color: var(--muted); font-size: 12px; }
 
         .nav { display: flex; flex-direction: column; gap: 4px; }
+        .module-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 20px; color: var(--text); }
+        .module-heading { display:flex; align-items:flex-start; justify-content:space-between; gap:16px; margin-bottom:18px; }
+        .module-heading h2 { margin:0 0 6px; font-size:1.2rem; font-weight:700; }
+        .module-heading p,.module-footnote { color:var(--muted); font-size:.88rem; }
+        .module-count { background:var(--primary-soft); color:var(--primary); padding:6px 10px; border-radius:999px; white-space:nowrap; font-size:.8rem; }
+        .module-error { padding:12px; border-radius:8px; background:#fff0f0; color:#a61b1b; }
+        .module-empty,.module-loading { padding:24px; color:var(--muted); }
+        .table-wrap { overflow:auto; }
+        .module-table { width:100%; border-collapse:collapse; font-size:.9rem; }
+        .module-table th,.module-table td { text-align:left; padding:11px 10px; border-bottom:1px solid var(--border); vertical-align:middle; }
+        .module-table th { color:var(--muted); font-weight:600; }
+        .inventory-stack { display:flex; flex-direction:column; gap:14px; }
+        .inventory-toolbar { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+        .inventory-title { margin:0 0 5px; font-size:1rem; font-weight:750; }
+        .inventory-subtitle { color:var(--muted); font-size:.82rem; margin:0; }
+        .inventory-table-wrap { border:1px solid var(--border); border-radius:10px; }
+        .inventory-table { min-width:760px; font-size:.82rem; }
+        .inventory-table th { white-space:nowrap; background:var(--surface-soft, var(--surface)); }
+        .inventory-table-head { text-transform:uppercase; letter-spacing:.035em; font-size:.72rem; }
+        .inventory-table td { padding:10px; }
+        .inventory-number { text-align:right !important; white-space:nowrap; }
+        .inventory-center { text-align:center !important; }
+        .inventory-key { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700; white-space:nowrap; }
+        .inventory-product { min-width:160px; font-weight:600; }
+        .inventory-money { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .inventory-investor-head { background:var(--primary-soft); color:var(--primary); text-align:center !important; }
+        .inventory-investor-cell { background:var(--surface-soft, var(--surface)); }
+        .inventory-percent { width:78px; padding:7px 5px; border:1px solid var(--border); border-radius:7px; text-align:center; background:var(--surface); color:var(--text); }
+        .inventory-percent:focus { outline:2px solid var(--primary); outline-offset:1px; }
+        .inventory-percent-disabled { background:var(--surface-soft, var(--surface)); color:var(--muted); opacity:.65; }
+        .inventory-state,.inventory-sum-badge { display:inline-block; padding:4px 7px; border-radius:999px; font-size:.72rem; font-weight:700; white-space:nowrap; }
+        .inventory-state-active { background:#dcfce7; color:#166534; }
+        .inventory-state-sold { background:#fee2e2; color:#991b1b; }
+        .inventory-sum-ok { background:#dcfce7; color:#166534; }
+        .inventory-sum-empty { background:var(--surface-soft, var(--surface)); color:var(--muted); }
+        .inventory-sum-warning { background:#fef3c7; color:#92400e; }
+        .inventory-action-button { padding:7px 9px; border:1px solid var(--border); border-radius:7px; color:var(--primary); background:var(--surface); font-size:.78rem; font-weight:650; white-space:nowrap; }
+        .inventory-action-button:hover { border-color:var(--primary); }
+        .inventory-table tbody tr:hover { background:var(--surface-soft, var(--surface)); }
+        .repair-form { display:flex; gap:8px; min-width:360px; }
+        .repair-form input { min-width:90px; width:140px; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); }
+        .repair-form input[name="detalles"] { flex:1; width:auto; }
+        .sr-only { position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden; clip:rect(0,0,0,0); white-space:nowrap; border:0; }
+        @media (max-width: 700px) { .module-heading { flex-direction:column; } .repair-form { min-width:280px; flex-wrap:wrap; } }
+
         .nav a {
             position: relative;
             display: flex; align-items: center; gap: 12px;
@@ -937,12 +984,10 @@ object DashboardRenderer {
         <nav class="nav" aria-label="Navegación principal">
             <a href="#/inicio" data-nav="inicio"><span class="nav-icon">${icon(ICON_HOME)}</span><span>Inicio</span></a>
             <a href="#/apis" data-nav="apis"><span class="nav-icon">${icon(ICON_API)}</span><span>APIs y conectores</span></a>
-            <a href="/chat" data-nav="chat"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Mensajería en vivo</span></a>
-            <a href="#/catalogo" data-nav="catalogo"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Catálogo</span></a>
-            <a href="#/chats" data-nav="chats"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Simulador</span></a>
-            <a href="/ui/reparaciones" data-nav="reparaciones"><span class="nav-icon">${icon(ICON_SPARK)}</span><span>Reparaciones</span></a>
-            <a href="/ui/socios" data-nav="socios"><span class="nav-icon">${icon(ICON_PEOPLE)}</span><span>Socios</span></a>
-            <a href="/ventas" data-nav="ventas"><span class="nav-icon">${icon(ICON_CHART)}</span><span>Ventas</span></a>
+            <a href="#/chats" data-nav="chats"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Mensajería</span></a>
+            <a href="#/catalogo" data-nav="catalogo"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Inventario</span></a>
+            <a href="#/socios" data-nav="socios"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Socios</span></a>
+            <a href="#/reparaciones" data-nav="reparaciones"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Reparaciones</span></a>
             <a href="#/metricas" data-nav="metricas"><span class="nav-icon">${icon(ICON_CHART)}</span><span>Métricas</span></a>
             <a href="#/automatizacion" data-nav="automatizacion"><span class="nav-icon">${icon(ICON_SPARK)}</span><span>Automatización</span></a>
         </nav>
@@ -1156,6 +1201,12 @@ object DashboardRenderer {
             </section>
 
             <!-- ==================== SUBPÁGINA: CATÁLOGO ==================== -->
+            <section class="view" data-view="socios" hidden>
+                <div id="socios-panel" class="module-loading" aria-live="polite">Cargando socios…</div>
+            </section>
+            <section class="view" data-view="reparaciones" hidden>
+                <div id="reparaciones-panel" class="module-loading" aria-live="polite">Cargando reparaciones…</div>
+            </section>
             <section class="view" data-view="catalogo" hidden>
                 <div class="page-head">
                     <div>
@@ -1169,6 +1220,10 @@ object DashboardRenderer {
                     </div>
                 </div>
                 <div id="reconcile-results" aria-live="polite"></div>
+                <div class="card module-panel">
+                    <div class="module-heading"><h3>Distribución de inversión por artículo</h3><p>Los porcentajes determinan cómo se reparte el resultado entre los socios. Los artículos vendidos quedan bloqueados por las reglas de negocio.</p></div>
+                    <div id="inventario-inversion-panel" class="module-loading" aria-live="polite">Cargando matriz de inversión…</div>
+                </div>
                 <div class="card">
                     <div class="table-wrap">
                         <table style="min-width:1080px">
@@ -1286,6 +1341,7 @@ object DashboardRenderer {
                             <p>3 hojas: Inventario, Publicacion, Canales.</p>
                         </div>
                         <form action="/api/excel/upload" method="post" enctype="multipart/form-data" class="stack">
+                            $csrfInput
                             <div class="dropzone">
                                 <input type="file" name="file" accept=".xlsx" aria-label="Archivo Excel comercial">
                                 <p>Carga un archivo .xlsx comercial (ej. NEGOCIO.xlsx).</p>

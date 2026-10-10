@@ -16,18 +16,6 @@ fun Route.sociosRoutes(
     socioService: SocioService,
     socioRepo: SocioRepository
 ) {
-    // Página completa de Socios (envuelta en el shell del dashboard)
-    get("/ui/socios") {
-        if (!call.requireDashboardAuth(dashboardGuard)) return@get
-        val incluirArchivados = call.request.queryParameters["archivados"]?.toBoolean() ?: false
-        val activos = try { socioRepo.listar(incluirArchivados = false) } catch (_: Exception) { emptyList() }
-        val archivados = if (incluirArchivados) {
-            try { socioRepo.listar(incluirArchivados = true).filter { !it.activo } } catch (_: Exception) { emptyList() }
-        } else emptyList()
-        val html = SociosRenderer.renderVistaSocios(activos, archivados, mostrarArchivados = incluirArchivados)
-        call.respondText(html, ContentType.Text.Html)
-    }
-
     route("/api/socios") {
 
         get {

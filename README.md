@@ -182,3 +182,19 @@ La suite cubre: motor de negociación L0-L4, aislamiento financiero (fuga de PM/
 ## 🔒 Licencia y Confidencialidad
 
 **Código Privado y Confidencial.** Todos los derechos reservados. Ver [`LICENSE`](LICENSE).
+
+
+## Nota de mantenimiento pendiente
+
+Antes de producción, lee `PENDIENTE_CAMBIAR_HTMX_OFICIAL.md`: `htmx-lite.js` es temporal y debe sustituirse por la biblioteca oficial htmx local, con pruebas de todos los formularios y eventos.
+
+## Registro de cambios y tareas pendientes
+
+- `MANUAL_DE_CAMBIOS_v9.md`: cambios de esta entrega, limitaciones, pruebas pendientes y próximos pasos.
+- `MANUAL_DE_CAMBIOS_v8.md`: primera entrega de módulos de socios y reparaciones.
+- `PENDIENTE_CAMBIAR_HTMX_OFICIAL.md`: guía para reemplazar el cliente htmx local limitado por la distribución oficial.
+
+
+## Registro de cambios reciente
+
+La entrega de octubre de 2026 documenta los cambios de la matriz de inversión y las validaciones en `MANUAL_DE_CAMBIOS_v10.md`. Consulta también `MANUAL_DE_CAMBIOS_v9.md` y `PENDIENTE_CAMBIAR_HTMX_OFICIAL.md`.

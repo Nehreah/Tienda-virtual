@@ -83,9 +83,8 @@ class InboundWebhookWorker(
                     // Si el payload es texto simple sin JSON, se procesa tal cual
                 }
 
-                // Pasar al pipeline de mensajes y registrar el trato en memoria (B-9)
-                val outcome = pipeline.handle(event.canal, senderId, messageId, text)
-                com.automata.app.AppStore.recordDeal(outcome)
+                // Pasar al pipeline de mensajes
+                pipeline.handle(event.canal, senderId, messageId, text)
 
                 transaction {
                     EventosEntrantesTable.update({ EventosEntrantesTable.id eq event.id }) { row ->

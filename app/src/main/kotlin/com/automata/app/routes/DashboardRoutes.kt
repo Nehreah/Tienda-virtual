@@ -3,7 +3,6 @@ package com.automata.app.routes
 import com.automata.app.AppStore
 import com.automata.app.AppStoreCatalog
 import com.automata.app.dashboard.ChatDealLog
-import com.automata.app.dashboard.ChatRenderer
 import com.automata.app.dashboard.DashboardGuard
 import com.automata.app.dashboard.DashboardRenderer
 import com.automata.app.dashboard.DealState
@@ -47,13 +46,15 @@ fun Route.dashboardRoutes(
         call.respondText(html, ContentType.Text.Html)
     }
 
-    // F4: Página de chat — ahora con interfaz funcional
     get("/chat") {
         if (!call.requireDashboardAuth(dashboardGuard)) return@get
-        call.respondText(ChatRenderer.renderChatPage(), ContentType.Text.Html)
+        val html = com.automata.app.dashboard.ChatRenderer.renderChatPage(
+            conversationsHtml = "<!-- Cargado dinámicamente -->",
+            activeChatHtml = "<!-- Selecciona una conversación -->"
+        )
+        call.respondText(html, ContentType.Text.Html)
     }
 
-    // F4: Endpoint htmx para la bandeja — ya servido por chatRoutes, aquí solo la página
     get("/ventas") {
         if (!call.requireDashboardAuth(dashboardGuard)) return@get
         val html = com.automata.app.dashboard.VentasRenderer.renderVentasPage(

@@ -205,22 +205,10 @@ CREATE OR REPLACE FUNCTION tienda.registrar_mensaje_cliente(
 DECLARE
   v_id bigint;
 BEGIN
-  -- Idempotencia: si ya existe el mensaje por canal_msg_id, devolvemos ese id
   IF p_canal_msg_id IS NOT NULL THEN
     SELECT id INTO v_id FROM tienda.conversacion_mensajes WHERE conversation_id = p_conv_id AND canal_msg_id = p_canal_msg_id;
     IF v_id IS NOT NULL THEN RETURN v_id; END IF;
   END IF;
-
-  -- B-3: Si la conversación todavía no existe, la creamos con estado IDLE.
-  -- Esto puede ocurrir en un entorno de pruebas o por una condición de carrera.
-  INSERT INTO tienda.conversaciones (conversation_id, customer_id, channel, state)
-  VALUES (
-    p_conv_id,
-    split_part(p_conv_id, ':', 2),
-    split_part(p_conv_id, ':', 1),
-    'IDLE'
-  )
-  ON CONFLICT (conversation_id) DO NOTHING;
 
   INSERT INTO tienda.conversacion_mensajes (conversation_id, canal_msg_id, emisor, contenido, estado_envio, enviado_en)
   VALUES (p_conv_id, p_canal_msg_id, 'CLIENTE', p_contenido, 'RECIBIDO', now())
@@ -234,23 +222,16 @@ BEGIN
   RETURN v_id;
 END $$;
 
--- B-1: Compuerta ATÓMICA — bloquea la fila con FOR UPDATE antes de comprobar atencion.
--- Si entre el SELECT y el INSERT el operador toma el control, el bloqueo lo detecta.
 CREATE OR REPLACE FUNCTION tienda.registrar_mensaje_bot(
   p_conv_id text, p_contenido text
 ) RETURNS bigint LANGUAGE plpgsql AS $$
 DECLARE
-  v_id      bigint;
+  v_id bigint;
   v_atencion text;
 BEGIN
-  -- Bloqueamos la fila de la conversación para evitar la carrera con tomar_conversacion
-  SELECT atencion INTO v_atencion
-    FROM tienda.conversaciones
-   WHERE conversation_id = p_conv_id
-     FOR UPDATE;
-
-  IF v_atencion IS NULL OR v_atencion <> 'BOT' THEN
-    RETURN NULL; -- Compuerta: el chat ya está en HUMANO, descartamos la respuesta del bot
+  SELECT atencion INTO v_atencion FROM tienda.conversaciones WHERE conversation_id = p_conv_id;
+  IF v_atencion <> 'BOT' THEN
+    RETURN NULL; -- Compuerta: descarte si el chat pasó a humano
   END IF;
 
   INSERT INTO tienda.conversacion_mensajes (conversation_id, emisor, contenido, estado_envio)
@@ -290,31 +271,14 @@ CREATE OR REPLACE FUNCTION tienda.marcar_envio(
 BEGIN
   UPDATE tienda.conversacion_mensajes
      SET estado_envio = p_estado,
-         error_envio = p_error,
+         error = p_error,
          canal_msg_id = coalesce(p_canal_msg_id, canal_msg_id),
-         actualizado_en = now()
+         enviado_en = CASE WHEN p_estado = 'ENVIADO' THEN now() ELSE enviado_en END
    WHERE id = p_msg_id;
   RETURN FOUND;
 END $$;
 
--- B-4: Encender "requiere atención" — invocado por escalate() del pipeline.
--- Se apaga automáticamente cuando el operador toma el chat o envía un mensaje.
-CREATE OR REPLACE FUNCTION tienda.marcar_requiere_atencion(
-  p_conv_id text, p_motivo text DEFAULT 'escalacion'
-) RETURNS boolean LANGUAGE plpgsql AS $$
-BEGIN
-  UPDATE tienda.conversaciones
-     SET requiere_atencion = true,
-         last_updated = now()
-   WHERE conversation_id = p_conv_id;
-
-  INSERT INTO tienda.chat_eventos (conversation_id, tipo)
-  VALUES (p_conv_id, 'atencion');
-
-  RETURN FOUND;
-END $$;
-
--- Vista para la Bandeja de Conversaciones en Dashboard (con no_leidos)
+-- Vista para la Bandeja de Conversaciones en Dashboard
 CREATE OR REPLACE VIEW tienda.v_bandeja AS
 SELECT c.conversation_id,
        c.channel,
@@ -331,12 +295,7 @@ SELECT c.conversation_id,
        cl.telefono AS cliente_telefono,
        m.contenido AS ultimo_mensaje,
        m.emisor AS ultimo_emisor,
-       m.creado_en AS ultimo_mensaje_en,
-       (SELECT count(*) FROM tienda.conversacion_mensajes
-         WHERE conversation_id = c.conversation_id
-           AND emisor = 'CLIENTE'
-           AND creado_en > coalesce(c.atencion_desde, '1970-01-01'::timestamptz)
-       )::int AS no_leidos
+       m.creado_en AS ultimo_mensaje_en
   FROM tienda.conversaciones c
   LEFT JOIN tienda.cliente cl ON c.cliente_id = cl.cliente_id
   LEFT JOIN LATERAL (

@@ -2,7 +2,6 @@ package com.automata.app.routes
 
 import com.automata.app.dashboard.DashboardGuard
 import com.automata.app.dashboard.requireDashboardAuth
-import com.automata.infra.db.DatabaseFactory
 import com.automata.messaging.ports.ChannelRouter
 import com.automata.shared.PortResult
 import io.ktor.http.*
@@ -11,21 +10,11 @@ import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.TextColumnType
+import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
-import java.util.concurrent.atomic.AtomicInteger
 
-/** Límite de conexiones SSE simultáneas para evitar fugas de recursos. */
-private val activeStreams = AtomicInteger(0)
-private const val MAX_STREAMS = 5
-
-/**
- * Rutas de control humano del chat.
- * Toda consulta con datos del usuario usa parámetros tipados (sin interpolación de strings SQL).
- */
 fun Route.chatRoutes(
     dashboardGuard: DashboardGuard,
     channelRouter: ChannelRouter?
@@ -38,17 +27,14 @@ fun Route.chatRoutes(
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "ID de conversación requerido"))
             return@post
         }
-        val usuario = call.request.headers["X-Dashboard-User"] ?: "dashboard"
+        val usuario = "dashboard"
 
         try {
-            val res = DatabaseFactory.tx("chat", usuario) {
-                exec(
-                    "SELECT tienda.tomar_conversacion(?, ?)::text AS res",
-                    args = listOf(
-                        TextColumnType() to convId,
-                        TextColumnType() to usuario
-                    )
-                ) { rs -> if (rs.next()) rs.getString("res") else "{}" }
+            val res = transaction {
+                exec("SELECT tienda.tomar_conversacion(?, ?)::text AS res",
+                    args = listOf(TextColumnType() to convId, TextColumnType() to usuario)) { rs ->
+                    if (rs.next()) rs.getString("res") else "{}"
+                }
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
@@ -65,22 +51,20 @@ fun Route.chatRoutes(
             return@post
         }
         val params = call.receiveParameters()
-        // Validar estados permitidos de ConversationState
-        val estadosPermitidos = setOf("IDLE", "NEGOTIATING", "AWAITING_PAYMENT", "SOLD", "ESCALATED_HUMAN")
-        val nuevoEstadoRaw = params["nuevoEstado"]?.trim()?.uppercase()
-        val nuevoEstado = if (nuevoEstadoRaw != null && nuevoEstadoRaw in estadosPermitidos) nuevoEstadoRaw else null
-        val usuario = call.request.headers["X-Dashboard-User"] ?: "dashboard"
+        val nuevoEstado = params["nuevoEstado"]?.trim() ?: "IDLE"
+        val estadosPermitidos = setOf("IDLE", "NEGOTIATING", "RESERVED", "PAYMENT_PENDING", "PAID_CONFIRMED", "ESCALATED_HUMAN", "CLOSED")
+        if (nuevoEstado !in estadosPermitidos) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Estado de conversación no permitido"))
+            return@post
+        }
+        val usuario = "dashboard"
 
         try {
-            val res = DatabaseFactory.tx("chat", usuario) {
-                exec(
-                    "SELECT tienda.devolver_conversacion(?, ?, ?)::text AS res",
-                    args = listOf(
-                        TextColumnType() to convId,
-                        TextColumnType() to usuario,
-                        TextColumnType() to nuevoEstado
-                    )
-                ) { rs -> if (rs.next()) rs.getString("res") else "{}" }
+            val res = transaction {
+                exec("SELECT tienda.devolver_conversacion(?, ?, ?)::text AS res",
+                    args = listOf(TextColumnType() to convId, TextColumnType() to usuario, TextColumnType() to nuevoEstado)) { rs ->
+                    if (rs.next()) rs.getString("res") else "{}"
+                }
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
@@ -88,12 +72,12 @@ fun Route.chatRoutes(
         }
     }
 
-    // 3. Bandeja de Conversaciones
+    // 2.1 Obtener Bandeja
     get("/api/chat/bandeja") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = false)) return@get
         try {
             val items = transaction {
-                exec("SELECT * FROM tienda.v_bandeja ORDER BY requiere_atencion DESC, ultimo_entrante_en DESC NULLS LAST LIMIT 100") { rs ->
+                exec("SELECT * FROM tienda.v_bandeja ORDER BY ultimo_entrante_en DESC NULLS LAST LIMIT 100") { rs ->
                     val list = mutableListOf<Map<String, Any?>>()
                     while (rs.next()) {
                         list.add(mapOf(
@@ -120,7 +104,7 @@ fun Route.chatRoutes(
         }
     }
 
-    // 4. Mensajes de una Conversación (paginados)
+    // 2.2 Obtener Mensajes de una conversación
     get("/api/chat/{id}/mensajes") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = false)) return@get
         val convId = call.parameters["id"]?.trim() ?: ""
@@ -131,13 +115,8 @@ fun Route.chatRoutes(
         val beforeId = call.request.queryParameters["before"]?.toLongOrNull() ?: Long.MAX_VALUE
         try {
             val items = transaction {
-                exec(
-                    "SELECT * FROM tienda.conversacion_mensajes WHERE conversation_id = ? AND id < ? ORDER BY id DESC LIMIT 50",
-                    args = listOf(
-                        TextColumnType() to convId,
-                        LongColumnType() to beforeId
-                    )
-                ) { rs ->
+                exec("SELECT * FROM tienda.conversacion_mensajes WHERE conversation_id = ? AND id < ? ORDER BY id DESC LIMIT 50",
+                    args = listOf(TextColumnType() to convId, LongColumnType() to beforeId)) { rs ->
                     val list = mutableListOf<Map<String, Any?>>()
                     while (rs.next()) {
                         list.add(mapOf(
@@ -145,7 +124,6 @@ fun Route.chatRoutes(
                             "emisor" to rs.getString("emisor"),
                             "contenido" to rs.getString("contenido"),
                             "estado_envio" to rs.getString("estado_envio"),
-                            "error_envio" to rs.getString("error_envio"),
                             "creado_en" to rs.getTimestamp("creado_en")?.time
                         ))
                     }
@@ -158,7 +136,7 @@ fun Route.chatRoutes(
         }
     }
 
-    // 5. Enviar Mensaje Humano
+    // 3. Enviar Mensaje Humano
     post("/api/chat/{id}/enviar") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
         val convId = call.parameters["id"]?.trim() ?: ""
@@ -172,256 +150,127 @@ fun Route.chatRoutes(
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "El texto del mensaje no puede estar vacío"))
             return@post
         }
-        val usuario = call.request.headers["X-Dashboard-User"] ?: "dashboard"
 
-        // Verificar atención humana y ventana de 24h usando parámetros
-        data class ConvInfo(val atencion: String, val channel: String, val customerId: String, val ultimoEntrante: java.sql.Timestamp?)
-        val convInfo = transaction {
-            exec(
-                "SELECT atencion, channel, customer_id, ultimo_entrante_en FROM tienda.conversaciones WHERE conversation_id = ?",
-                args = listOf(TextColumnType() to convId)
-            ) { rs ->
-                if (rs.next()) ConvInfo(
-                    rs.getString("atencion"),
-                    rs.getString("channel"),
-                    rs.getString("customer_id"),
-                    rs.getTimestamp("ultimo_entrante_en")
-                ) else null
-            }
+        val usuario = "dashboard"
+
+        // Verificar atención humana y ventana de 24h
+        val (atencion, channel, customerId, ultimoEntrante) = transaction {
+            exec("SELECT atencion, channel, customer_id, ultimo_entrante_en FROM tienda.conversaciones WHERE conversation_id = ?",
+                args = listOf(TextColumnType() to convId)) { rs ->
+                if (rs.next()) {
+                    Tuple4(
+                        rs.getString("atencion"),
+                        rs.getString("channel"),
+                        rs.getString("customer_id"),
+                        rs.getTimestamp("ultimo_entrante_en")
+                    )
+                } else Tuple4("BOT", "", "", null)
+            } ?: Tuple4("BOT", "", "", null)
         }
 
-        if (convInfo == null) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Conversación no encontrada"))
+        if (atencion != "HUMANO") {
+            call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Debe tomar el control de la conversación antes de enviar mensajes humanos"))
             return@post
         }
 
-        if (convInfo.atencion != "HUMANO") {
-            call.respond(HttpStatusCode.Forbidden, mapOf("error" to "Debe tomar el control de la conversación antes de enviar mensajes"))
-            return@post
-        }
-
-        if (convInfo.ultimoEntrante != null) {
-            val diffHours = (Instant.now().toEpochMilli() - convInfo.ultimoEntrante.time) / 3600_000L
+        if (ultimoEntrante != null) {
+            val diffHours = (Instant.now().toEpochMilli() - ultimoEntrante.time) / 3600_000L
             if (diffHours >= 24) {
-                call.respond(HttpStatusCode.UnprocessableEntity, mapOf(
-                    "error" to "Ha expirado la ventana de 24 horas desde el último mensaje del cliente",
-                    "horas_desde_ultimo" to diffHours
-                ))
+                call.respond(HttpStatusCode.UnprocessableEntity, mapOf("error" to "Ha expirado la ventana de 24 horas desde el último mensaje del cliente"))
                 return@post
             }
         }
 
-        // Registrar mensaje humano en estado ENVIANDO (con parámetros)
-        val msgId = DatabaseFactory.tx("chat", usuario) {
-            exec(
-                "SELECT tienda.registrar_mensaje_humano(?, ?, ?) AS msg_id",
-                args = listOf(
-                    TextColumnType() to convId,
-                    TextColumnType() to texto,
-                    TextColumnType() to usuario
-                )
-            ) { rs -> if (rs.next()) rs.getLong("msg_id").takeIf { !rs.wasNull() } else null }
+        // Registrar mensaje humano en estado ENVIANDO
+        val msgId = transaction {
+            exec("SELECT tienda.registrar_mensaje_humano(?, ?, ?) AS msg_id",
+                args = listOf(TextColumnType() to convId, TextColumnType() to texto, TextColumnType() to usuario)) { rs ->
+                if (rs.next()) rs.getLong("msg_id") else null
+            }
         }
 
         if (msgId == null) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudo registrar el mensaje en la base de datos"))
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudo registrar el mensaje humano en la base de datos"))
             return@post
         }
 
-        if (channelRouter == null || !channelRouter.supports(convInfo.channel)) {
+        if (channelRouter == null || !channelRouter.supports(channel)) {
             transaction {
-                exec(
-                    "SELECT tienda.marcar_envio(?, 'FALLO', 'Canal no configurado', NULL)",
-                    args = listOf(LongColumnType() to msgId)
-                ) { rs -> }
+                exec("SELECT tienda.marcar_envio(?, ?, ?, NULL)",
+                    args = listOf(LongColumnType() to msgId, TextColumnType() to "FALLO", TextColumnType() to "Canal no configurado o soportado"))
             }
-            call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "El canal '${convInfo.channel}' no está configurado para envíos"))
+            call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "El canal '$channel' no está configurado para envíos"))
             return@post
         }
 
-        val result = channelRouter.sendMessage(convInfo.channel, convInfo.customerId, texto)
+        val result = channelRouter.sendMessage(channel, customerId, texto)
         when (result) {
             is PortResult.Ok -> {
                 val extId = result.value
                 transaction {
-                    exec(
-                        "SELECT tienda.marcar_envio(?, 'ENVIADO', NULL, ?)",
-                        args = listOf(LongColumnType() to msgId, TextColumnType() to extId)
-                    ) { rs -> }
+                    exec("SELECT tienda.marcar_envio(?, ?, NULL, ?)",
+                        args = listOf(LongColumnType() to msgId, TextColumnType() to "ENVIADO", TextColumnType() to extId))
                 }
                 call.respond(HttpStatusCode.OK, mapOf("status" to "enviado", "mensaje_id" to msgId, "external_id" to extId))
             }
             is PortResult.Failure -> {
                 val errorMsg = when (result) {
-                    is PortResult.Permanent  -> "${result.code}: ${result.detail}"
-                    is PortResult.Transient  -> result.cause
-                    is PortResult.RateLimited -> "Rate limited por ${result.retryAfterSeconds}s"
-                    PortResult.AuthExpired   -> "Token de acceso expirado"
+                    is PortResult.Permanent -> "${result.code}: ${result.detail}"
+                    is PortResult.Transient -> result.cause
+                    is PortResult.RateLimited -> "Rate limited for ${result.retryAfterSeconds}s"
+                    PortResult.AuthExpired -> "Auth expired"
                 }
                 transaction {
-                    exec(
-                        "SELECT tienda.marcar_envio(?, 'FALLO', ?, NULL)",
-                        args = listOf(LongColumnType() to msgId, TextColumnType() to errorMsg)
-                    ) { rs -> }
+                    exec("SELECT tienda.marcar_envio(?, ?, ?, NULL)",
+                        args = listOf(LongColumnType() to msgId, TextColumnType() to "FALLO", TextColumnType() to errorMsg))
                 }
-                call.respond(HttpStatusCode.BadGateway, mapOf("error" to "Error al enviar: $errorMsg"))
+                call.respond(HttpStatusCode.BadGateway, mapOf("error" to "Error al enviar mensaje por canal: $errorMsg"))
             }
         }
     }
 
-    // 6. Reintentar mensaje en FALLO
-    post("/api/chat/mensajes/{msgId}/reintentar") {
-        if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
-        val msgId = call.parameters["msgId"]?.toLongOrNull()
-        if (msgId == null) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "ID de mensaje inválido"))
-            return@post
-        }
-        val usuario = call.request.headers["X-Dashboard-User"] ?: "dashboard"
-
-        // Obtener datos del mensaje original
-        data class MsgInfo(val convId: String, val contenido: String, val canal: String, val customerId: String)
-        val msgInfo = transaction {
-            exec(
-                """SELECT m.conversation_id, m.contenido, c.channel, c.customer_id
-                   FROM tienda.conversacion_mensajes m
-                   JOIN tienda.conversaciones c ON c.conversation_id = m.conversation_id
-                   WHERE m.id = ? AND m.estado_envio = 'FALLO'""",
-                args = listOf(LongColumnType() to msgId)
-            ) { rs ->
-                if (rs.next()) MsgInfo(
-                    rs.getString("conversation_id"),
-                    rs.getString("contenido"),
-                    rs.getString("channel"),
-                    rs.getString("customer_id")
-                ) else null
-            }
-        }
-
-        if (msgInfo == null) {
-            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Mensaje no encontrado o no está en estado FALLO"))
-            return@post
-        }
-
-        if (channelRouter == null || !channelRouter.supports(msgInfo.canal)) {
-            call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Canal '${msgInfo.canal}' no configurado"))
-            return@post
-        }
-
-        // Marcar como enviando antes de intentar
-        transaction {
-            exec(
-                "SELECT tienda.marcar_envio(?, 'ENVIANDO', NULL, NULL)",
-                args = listOf(LongColumnType() to msgId)
-            ) { rs -> }
-        }
-
-        val result = channelRouter.sendMessage(msgInfo.canal, msgInfo.customerId, msgInfo.contenido)
-        when (result) {
-            is PortResult.Ok -> {
-                transaction {
-                    exec(
-                        "SELECT tienda.marcar_envio(?, 'ENVIADO', NULL, ?)",
-                        args = listOf(LongColumnType() to msgId, TextColumnType() to result.value)
-                    ) { rs -> }
-                }
-                call.respond(HttpStatusCode.OK, mapOf("status" to "enviado"))
-            }
-            is PortResult.Failure -> {
-                val errorMsg = when (result) {
-                    is PortResult.Permanent  -> "${result.code}: ${result.detail}"
-                    is PortResult.Transient  -> result.cause
-                    is PortResult.RateLimited -> "Rate limited por ${result.retryAfterSeconds}s"
-                    PortResult.AuthExpired   -> "Token expirado"
-                }
-                transaction {
-                    exec(
-                        "SELECT tienda.marcar_envio(?, 'FALLO', ?, NULL)",
-                        args = listOf(LongColumnType() to msgId, TextColumnType() to errorMsg)
-                    ) { rs -> }
-                }
-                call.respond(HttpStatusCode.BadGateway, mapOf("error" to errorMsg))
-            }
-        }
-    }
-
-    // 7. Stream SSE — Tiempo Real del Chat
+    // 4. Stream SSE para Tiempo Real del Chat
     get("/api/chat/stream") {
         if (!call.requireDashboardAuth(dashboardGuard, mutating = false)) return@get
-
-        if (activeStreams.get() >= MAX_STREAMS) {
-            call.respond(HttpStatusCode.TooManyRequests, mapOf("error" to "Límite de conexiones simultáneas alcanzado"))
-            return@get
-        }
-
         call.response.cacheControl(CacheControl.NoCache(null))
         call.response.headers.append("X-Accel-Buffering", "no")
 
-        // Soporte de reconexión con Last-Event-ID
         var lastSeenId = call.request.headers["Last-Event-ID"]?.toLongOrNull() ?: 0L
 
-        // Detectar si el cursor está demasiado viejo (purge de 7 días)
-        val oldestId: Long = try {
-            transaction {
-                exec("SELECT COALESCE(MIN(id), 0) FROM tienda.chat_eventos") { rs ->
-                    if (rs.next()) rs.getLong(1) else 0L
-                }
-            } ?: 0L
-        } catch (_: Exception) { 0L }
-
-        activeStreams.incrementAndGet()
-        try {
-            call.respondTextWriter(ContentType.Text.EventStream) {
-                // Si el cursor es más viejo que el mínimo disponible, enviar reset
-                if (lastSeenId > 0 && lastSeenId < oldestId) {
-                    write("event: reset\ndata: {\"message\":\"Cursor expirado, recargando bandeja\"}\n\n")
-                    flush()
-                    lastSeenId = 0L
-                }
-
-                var heartbeatCounter = 0
-                while (isActive) {
-                    val events = try {
-                        transaction {
-                            exec(
-                                "SELECT id, conversation_id, tipo FROM tienda.chat_eventos WHERE id > ? ORDER BY id ASC LIMIT 50",
-                                args = listOf(LongColumnType() to lastSeenId)
-                            ) { rs ->
-                                val list = mutableListOf<Triple<Long, String, String>>()
-                                while (rs.next()) {
-                                    list.add(Triple(rs.getLong("id"), rs.getString("conversation_id"), rs.getString("tipo")))
-                                }
-                                list
+        call.respondTextWriter(ContentType.Text.EventStream) {
+            while (true) {
+                val events = try {
+                    transaction {
+                        exec("SELECT id, conversation_id, tipo FROM tienda.chat_eventos WHERE id > ? ORDER BY id ASC LIMIT 50",
+                            args = listOf(LongColumnType() to lastSeenId)) { rs ->
+                            val list = mutableListOf<Triple<Long, String, String>>()
+                            while (rs.next()) {
+                                list.add(Triple(rs.getLong("id"), rs.getString("conversation_id"), rs.getString("tipo")))
                             }
-                        } ?: emptyList()
-                    } catch (_: Exception) {
-                        emptyList()
-                    }
-
-                    if (events.isNotEmpty()) {
-                        for (evt in events) {
-                            lastSeenId = evt.first
-                            write("id: ${evt.first}\n")
-                            write("event: ${evt.third}\n")
-                            write("data: {\"convId\":\"${evt.second.replace("\"", "\\\"")}\",\"tipo\":\"${evt.third}\"}\n\n")
+                            list
                         }
-                        flush()
-                        heartbeatCounter = 0
-                    } else {
-                        heartbeatCounter++
-                        // Latido cada ~15 s (7 ciclos × 2 s ≈ 14 s)
-                        if (heartbeatCounter >= 7) {
-                            write("event: ping\ndata: {\"ts\":${System.currentTimeMillis()}}\n\n")
-                            flush()
-                            heartbeatCounter = 0
-                        }
-                    }
-
-                    delay(2000L)
+                    } ?: emptyList()
+                } catch (e: Exception) {
+                    emptyList()
                 }
+
+                if (events.isNotEmpty()) {
+                    for (evt in events) {
+                        lastSeenId = evt.first
+                        write("id: ${evt.first}\n")
+                        write("event: ${evt.third}\n")
+                        write("data: {\"convId\":\"${evt.second}\",\"tipo\":\"${evt.third}\"}\n\n")
+                        flush()
+                    }
+                } else {
+                    write("data: ping\n\n")
+                    flush()
+                }
+
+                delay(2000L)
             }
-        } finally {
-            activeStreams.decrementAndGet()
         }
     }
 }
+
+private data class Tuple4<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
