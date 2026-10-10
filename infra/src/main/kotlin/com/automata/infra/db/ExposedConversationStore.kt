@@ -144,6 +144,23 @@ class ExposedConversationStore : ConversationStore {
         }
     }
 
+    /** B-4: Enciende requiere_atencion y encola evento SSE de tipo "atencion". */
+    override fun marcarRequiereAtencion(convId: String, motivo: String) {
+        transaction {
+            try {
+                exec(
+                    "SELECT tienda.marcar_requiere_atencion(?, ?)",
+                    args = listOf(
+                        org.jetbrains.exposed.sql.TextColumnType() to convId,
+                        org.jetbrains.exposed.sql.TextColumnType() to motivo
+                    )
+                ) { rs -> }
+            } catch (e: Exception) {
+                logger.warn("marcar_requiere_atencion falló para $convId: ${e.message}")
+            }
+        }
+    }
+
     // -------------------------------------------------------------------------------------------
 
     private fun ResultRow.toConversation(): Conversation {
@@ -157,9 +174,11 @@ class ExposedConversationStore : ConversationStore {
         val pendingAtJava = this[ConversacionesTable.pendingCounterAt]
         val lastUpdatedJava = this[ConversacionesTable.lastUpdated]
 
+        // B-7: Cargamos los ÚLTIMOS 50 mensajes (DESC) y luego los revertimos para
+        // mantener el orden cronológico en el contexto del LLM.
         val convId = this[ConversacionesTable.conversationId]
         val messagesList = ConversacionMensajesTable.select { ConversacionMensajesTable.conversationId eq convId }
-            .orderBy(ConversacionMensajesTable.creadoEn to org.jetbrains.exposed.sql.SortOrder.ASC)
+            .orderBy(ConversacionMensajesTable.creadoEn to org.jetbrains.exposed.sql.SortOrder.DESC)
             .limit(50)
             .map { row ->
                 Message(
@@ -169,6 +188,7 @@ class ExposedConversationStore : ConversationStore {
                     timestamp = kotlinx.datetime.Instant.fromEpochMilliseconds(row[ConversacionMensajesTable.creadoEn].toEpochMilli())
                 )
             }
+            .reversed() // Revertir para que el orden sea cronológico (más antiguo → más reciente)
 
         return Conversation(
             conversationId = this[ConversacionesTable.conversationId],

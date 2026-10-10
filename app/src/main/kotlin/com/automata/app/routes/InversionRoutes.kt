@@ -35,14 +35,22 @@ fun Route.inversionRoutes(
             val keyStr = call.parameters["key"] ?: ""
             val socioId = call.parameters["socioId"]?.toLongOrNull()
             val params = call.receiveParameters()
-            val pctStr = params["pct"] ?: "0"
+            val pctStr = params["pct"]
 
             if (socioId == null) {
                 call.respond(HttpStatusCode.BadRequest, "Socio ID inválido")
                 return@put
             }
 
-            val pct = pctStr.toBigDecimalOrNull() ?: BigDecimal.ZERO
+            val pct = pctStr?.trim()?.takeIf { it.isNotEmpty() }?.toBigDecimalOrNull()
+            if (pct == null || pct < BigDecimal.ZERO || pct > BigDecimal("100")) {
+                call.respond(HttpStatusCode.BadRequest, "El porcentaje debe ser un número entre 0 y 100")
+                return@put
+            }
+            if (keyStr.isBlank()) {
+                call.respond(HttpStatusCode.BadRequest, "Key de artículo requerida")
+                return@put
+            }
             val key = ProductKey(keyStr)
 
             try {

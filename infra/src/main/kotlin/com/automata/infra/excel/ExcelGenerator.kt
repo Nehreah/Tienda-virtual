@@ -38,7 +38,7 @@ object ExcelGenerator {
         val baseHeaders = listOf(
             "Key", "Item name", "PP", "PM", "Costo", "Ganancia", "ROI/Margen",
             "Estado", "Link", "Fotos", "Marca", "Tipo", "Condición", "cantidad", "ubicación",
-            "Descripción AB", "Fecha Compra", "Fecha Venta"
+            "Descripción AB", "Fecha Compra", "Fecha Venta", "Requiere Reparación"
         )
         val socioHeaders = socios.map { "% ${it.nombre}" }
         val invHeaders = if (socios.isNotEmpty()) baseHeaders + socioHeaders + "% Suma" else baseHeaders
@@ -80,9 +80,10 @@ object ExcelGenerator {
             row.createCell(15).setCellValue(sanitizeCell(item.descripcion ?: ""))
             row.createCell(16).setCellValue(item.fechaCompra?.toString() ?: "")
             row.createCell(17).setCellValue(item.fechaVenta?.toString() ?: "")
+            row.createCell(18).setCellValue(if (item.requiereReparacion) "Sí" else "No")
 
             if (socios.isNotEmpty()) {
-                var colIdx = 18
+                var colIdx = 19
                 socios.forEach { socio ->
                     val pct = item.reparte.porcentaje(socio.id)
                     val pctStr = if (pct.signum() > 0) pct.stripTrailingZeros().toPlainString() else ""

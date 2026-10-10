@@ -16,6 +16,18 @@ fun Route.sociosRoutes(
     socioService: SocioService,
     socioRepo: SocioRepository
 ) {
+    // Página completa de Socios (envuelta en el shell del dashboard)
+    get("/ui/socios") {
+        if (!call.requireDashboardAuth(dashboardGuard)) return@get
+        val incluirArchivados = call.request.queryParameters["archivados"]?.toBoolean() ?: false
+        val activos = try { socioRepo.listar(incluirArchivados = false) } catch (_: Exception) { emptyList() }
+        val archivados = if (incluirArchivados) {
+            try { socioRepo.listar(incluirArchivados = true).filter { !it.activo } } catch (_: Exception) { emptyList() }
+        } else emptyList()
+        val html = SociosRenderer.renderVistaSocios(activos, archivados, mostrarArchivados = incluirArchivados)
+        call.respondText(html, ContentType.Text.Html)
+    }
+
     route("/api/socios") {
 
         get {
@@ -41,6 +53,24 @@ fun Route.sociosRoutes(
                 val activos = socioRepo.listar(incluirArchivados = false)
                 val html = SociosRenderer.renderVistaSocios(activos, emptyList(), error = e.message ?: "Error creando socio")
                 call.respondText(html, ContentType.Text.Html, HttpStatusCode.BadRequest)
+            }
+        }
+
+        put("/{id}") {
+            if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@put
+            val id = call.parameters["id"]?.toLongOrNull()
+            if (id == null) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "ID de socio inválido"))
+                return@put
+            }
+            val nombre = call.receiveParameters()["nombre"]?.trim().orEmpty()
+            try {
+                val socio = socioService.renombrar(id, nombre)
+                call.respond(HttpStatusCode.OK, mapOf("id" to socio.id, "nombre" to socio.nombre, "estado" to if (socio.activo) "activo" else "archivado"))
+            } catch (e: IllegalArgumentException) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to (e.message ?: "Nombre inválido")))
+            } catch (e: Exception) {
+                call.respond(HttpStatusCode.NotFound, mapOf("error" to (e.message ?: "No se pudo renombrar el socio")))
             }
         }
 

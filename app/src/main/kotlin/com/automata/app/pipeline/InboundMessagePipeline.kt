@@ -148,7 +148,20 @@ class InboundMessagePipeline(
         // Fase 2: Compuerta en BD para evitar carrera al enviar. 
         // Si justo cambió a HUMANO, esto devuelve null y no enviamos.
         val dbMsgId = conversations.registrarMensajeBot(convId, reply)
-            ?: return@withContext outcome.copy(reply = null)
+        if (dbMsgId == null) {
+            // (B-2) La compuerta descartó el mensaje. Revertimos la reserva si se hizo en este turno.
+            val newResId = outcome.conversation.currentReservationId
+            if (newResId != null && newResId != conv.currentReservationId) {
+                reservations[newResId]?.let { r ->
+                    releaseStock(r)
+                    reservations.remove(newResId)
+                }
+            }
+            // Guardamos solo el mensaje del cliente en el estado previo
+            val convSoloCliente = conv.append(Message(messageId, "CUSTOMER", trimmed, now), now)
+            conversations.save(convSoloCliente)
+            return@withContext outcome.copy(reply = null)
+        }
 
         val sent = router.sendMessage(ch, senderId, reply)
         
@@ -433,6 +446,8 @@ class InboundMessagePipeline(
                 reservationRepo?.extendExpiry(r.reservationId, newExpiry)
             }
         }
+        // B-4: Encender "requiere atención" en BD para que el SSE notifique al dashboard
+        conversations.marcarRequiereAtencion(conv.conversationId, "escalacion_chatbot")
         return answer(conv.copy(state = ConversationState.ESCALATED_HUMAN), now, reply, productOf(conv))
     }
 

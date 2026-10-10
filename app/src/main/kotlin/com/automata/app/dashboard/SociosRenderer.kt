@@ -95,7 +95,7 @@ object SociosRenderer {
                             </td>
                             <td class="px-6 py-4 text-right">
                                 <button hx-post="/api/socios/${socio.id}/reactivar"
-                                        hx-target="#main-content"
+                                        hx-target="#socios-panel"
                                         class="text-indigo-600 hover:text-indigo-800 font-medium text-xs">
                                     Reactivar
                                 </button>
@@ -117,7 +117,7 @@ object SociosRenderer {
             <div id="modal-nuevo-socio" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4">
                 <div class="bg-white rounded-lg p-6 max-w-md w-full shadow-xl">
                     <h3 class="text-lg font-bold text-gray-800 mb-4">Agregar Nuevo Socio</h3>
-                    <form hx-post="/api/socios" hx-target="#main-content">
+                    <form hx-post="/api/socios" hx-target="#socios-panel">
                         <div class="mb-4">
                             <label class="block text-sm font-medium text-gray-700 mb-1">Nombre del Socio</label>
                             <input type="text" name="nombre" required maxlength="60"
@@ -154,7 +154,7 @@ object SociosRenderer {
                     <div class="flex justify-end space-x-3">
                         <button onclick="document.getElementById('modal-impacto').remove()"
                                 class="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded">Cancelar</button>
-                        <button hx-delete="/api/socios/${impacto.id}" hx-target="#main-content"
+                        <button hx-delete="/api/socios/${impacto.id}" hx-target="#socios-panel"
                                 class="px-4 py-2 text-sm bg-red-600 text-white rounded font-medium hover:bg-red-700">Confirmar Retiro</button>
                     </div>
                 </div>

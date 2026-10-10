@@ -18,6 +18,8 @@ interface ConversationStore {
     fun registrarMensajeCliente(convId: String, canalMsgId: String?, contenido: String): Long? = null
     fun registrarMensajeBot(convId: String, contenido: String): Long? = null
     fun marcarEnvio(msgId: Long, estado: String, error: String? = null, canalMsgId: String? = null) {}
+    /** B-4: Activa la bandera "requiere atención" en la BD y encola un evento SSE de tipo "atencion". */
+    fun marcarRequiereAtencion(convId: String, motivo: String = "escalacion") {}
 }
 
 /**

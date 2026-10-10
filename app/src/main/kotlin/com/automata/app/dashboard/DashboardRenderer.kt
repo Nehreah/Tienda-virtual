@@ -19,9 +19,8 @@ import java.util.Locale
  */
 object DashboardRenderer {
 
-    // htmx fijado a una versión exacta y verificado con SRI (Subresource Integrity).
-    private const val HTMX_SRC = "https://unpkg.com/htmx.org@1.9.10"
-    private const val HTMX_SRI = "sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC"
+    // htmx servido localmente desde /static/ — sin CDN externo, compatible con CSP 'self'.
+    private const val HTMX_SRC = "/static/htmx.min.js"
 
     /** Canales conocidos. Cualquier otro valor se agrupa como "simulador". */
     private val CHANNEL_LABELS = linkedMapOf(
@@ -42,14 +41,15 @@ object DashboardRenderer {
     private const val ICON_MOON = """<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>"""
     private const val ICON_MENU = """<path d="M4 6h16M4 12h16M4 18h16"/>"""
     private const val ICON_INFO = """<circle cx="12" cy="12" r="9"/><path d="M12 8h.01M11 12h1v4h1"/>"""
+    private const val ICON_PEOPLE = """<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/>"""
 
     fun renderDashboardPage(
         products: List<CommercialProduct>,
         inventoryMap: Map<String, OperationalInventory>,
         channelStatuses: List<ChannelListingStatus>,
         apiIntegrations: List<ApiIntegrationStatus>,
-        chatDeals: List<ChatDealLog>,
-        csrfToken: String = ""
+        chatDeals: List<ChatDealLog>
+        // S-4: Token CSRF eliminado (código muerto). La defensa real es OriginGuard (comprobación de Origin/Referer).
     ): String {
         val totalProducts = products.size
         val readyForShopify = channelStatuses.count { it.channel == "shopify" && it.isPublished }
@@ -95,11 +95,6 @@ object DashboardRenderer {
             setupProgress >= 25 -> 2
             else -> 1
         }
-
-        // Token CSRF: se incluye en formularios (campo oculto) y en las peticiones htmx (cabecera).
-        val csrfInput = if (csrfToken.isNotBlank()) {
-            """<input type="hidden" name="_csrf" value="${escapeHtml(csrfToken)}">"""
-        } else ""
 
         // Filas para la tabla de Productos
         val productRowsHtml = products.joinToString("\n") { p ->
@@ -188,7 +183,6 @@ object DashboardRenderer {
                 """
                 <form method="POST" action="/api/confirmar-pago" class="inline-form js-confirm-pago" data-customer="${escapeHtml(chat.customer)}">
                     <input type="hidden" name="dealId" value="${escapeHtml(chat.id)}">
-                    $csrfInput
                     <button type="submit" class="btn btn-primary btn-sm">✔ Confirmar pago</button>
                 </form>
                 """
@@ -281,20 +275,10 @@ object DashboardRenderer {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="color-scheme" content="dark light">
-    <meta name="csrf-token" content="${escapeHtml(csrfToken)}">
+    <!-- S-4: csrf-token eliminado — la defensa CSRF es OriginGuard (Origin/Referer) -->
     <title>Tienda Virtual Multicanal · Commerce Control</title>
-    <script>
-        /* Aplica el tema antes de pintar para evitar el parpadeo claro/oscuro. */
-        (function () {
-            var t = null;
-            try { t = localStorage.getItem('theme'); } catch (e) {}
-            if (t !== 'light' && t !== 'dark') {
-                t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
-            }
-            document.documentElement.setAttribute('data-theme', t);
-        })();
-    </script>
-    <script src="$HTMX_SRC" integrity="$HTMX_SRI" crossorigin="anonymous" defer></script>
+    <script src="/static/theme-init.js"></script>
+    <script src="$HTMX_SRC" defer></script>
     <style>
         /* ================= Tokens ================= */
         :root {
@@ -953,8 +937,12 @@ object DashboardRenderer {
         <nav class="nav" aria-label="Navegación principal">
             <a href="#/inicio" data-nav="inicio"><span class="nav-icon">${icon(ICON_HOME)}</span><span>Inicio</span></a>
             <a href="#/apis" data-nav="apis"><span class="nav-icon">${icon(ICON_API)}</span><span>APIs y conectores</span></a>
-            <a href="#/chats" data-nav="chats"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Mensajería</span></a>
+            <a href="/chat" data-nav="chat"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Mensajería en vivo</span></a>
             <a href="#/catalogo" data-nav="catalogo"><span class="nav-icon">${icon(ICON_BOX)}</span><span>Catálogo</span></a>
+            <a href="#/chats" data-nav="chats"><span class="nav-icon">${icon(ICON_CHAT)}</span><span>Simulador</span></a>
+            <a href="/ui/reparaciones" data-nav="reparaciones"><span class="nav-icon">${icon(ICON_SPARK)}</span><span>Reparaciones</span></a>
+            <a href="/ui/socios" data-nav="socios"><span class="nav-icon">${icon(ICON_PEOPLE)}</span><span>Socios</span></a>
+            <a href="/ventas" data-nav="ventas"><span class="nav-icon">${icon(ICON_CHART)}</span><span>Ventas</span></a>
             <a href="#/metricas" data-nav="metricas"><span class="nav-icon">${icon(ICON_CHART)}</span><span>Métricas</span></a>
             <a href="#/automatizacion" data-nav="automatizacion"><span class="nav-icon">${icon(ICON_SPARK)}</span><span>Automatización</span></a>
         </nav>
@@ -1298,7 +1286,6 @@ object DashboardRenderer {
                             <p>3 hojas: Inventario, Publicacion, Canales.</p>
                         </div>
                         <form action="/api/excel/upload" method="post" enctype="multipart/form-data" class="stack">
-                            $csrfInput
                             <div class="dropzone">
                                 <input type="file" name="file" accept=".xlsx" aria-label="Archivo Excel comercial">
                                 <p>Carga un archivo .xlsx comercial (ej. NEGOCIO.xlsx).</p>
@@ -1330,95 +1317,7 @@ object DashboardRenderer {
     </div>
 </div>
 
-<script>
-    (function () {
-        'use strict';
-
-        /* ---------- Subpáginas (ruteo por hash) ---------- */
-        var VIEWS = ['inicio', 'apis', 'chats', 'catalogo', 'metricas', 'automatizacion'];
-        var TITLES = {
-            inicio: 'Inicio',
-            apis: 'APIs y conectores',
-            chats: 'Mensajería',
-            catalogo: 'Catálogo',
-            metricas: 'Métricas',
-            automatizacion: 'Automatización'
-        };
-
-        function currentView() {
-            var h = (location.hash || '').replace(/^#\/?/, '');
-            return VIEWS.indexOf(h) >= 0 ? h : 'inicio';
-        }
-
-        function showView() {
-            var v = currentView();
-            document.querySelectorAll('.view').forEach(function (s) {
-                s.hidden = s.getAttribute('data-view') !== v;
-            });
-            document.querySelectorAll('[data-nav]').forEach(function (a) {
-                if (a.getAttribute('data-nav') === v) { a.setAttribute('aria-current', 'page'); }
-                else { a.removeAttribute('aria-current'); }
-            });
-            document.getElementById('page-title').textContent = TITLES[v];
-            document.title = TITLES[v] + ' · Commerce Control';
-            document.body.classList.remove('nav-open');
-            window.scrollTo(0, 0);
-        }
-        window.addEventListener('hashchange', showView);
-        showView();
-
-        /* ---------- Autodetección Callback URL de Meta ---------- */
-        var cbInput = document.getElementById('meta-callback-url-input');
-        if (cbInput) { cbInput.value = window.location.origin + '/webhooks/meta'; }
-
-        /* ---------- Menú móvil ---------- */
-        document.getElementById('menu-btn').addEventListener('click', function () {
-            document.body.classList.toggle('nav-open');
-        });
-        document.getElementById('scrim').addEventListener('click', function () {
-            document.body.classList.remove('nav-open');
-        });
-
-        /* ---------- Modo claro / oscuro ---------- */
-        document.getElementById('theme-toggle').addEventListener('click', function () {
-            var root = document.documentElement;
-            var next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-            root.setAttribute('data-theme', next);
-            try { localStorage.setItem('theme', next); } catch (e) {}
-        });
-
-        /* ---------- Filtro de chats por canal ---------- */
-        document.addEventListener('click', function (e) {
-            var chip = e.target.closest ? e.target.closest('.chip[data-filter]') : null;
-            if (!chip) { return; }
-            var ch = chip.getAttribute('data-filter');
-            document.querySelectorAll('.chip[data-filter]').forEach(function (b) {
-                var on = b.getAttribute('data-filter') === ch;
-                b.classList.toggle('active', on);
-                b.setAttribute('aria-pressed', on ? 'true' : 'false');
-            });
-            document.querySelectorAll('.chat-row').forEach(function (r) {
-                r.hidden = !(ch === 'all' || r.getAttribute('data-channel') === ch);
-            });
-        });
-
-        /* ---------- Confirmar pago (el nombre se lee del atributo data-*, nunca se evalúa como JS) ---------- */
-        document.addEventListener('submit', function (e) {
-            var f = e.target;
-            if (f && f.classList && f.classList.contains('js-confirm-pago')) {
-                var who = f.getAttribute('data-customer') || 'este cliente';
-                if (!window.confirm('¿Confirmar pago para ' + who + '?')) { e.preventDefault(); }
-            }
-        });
-
-        /* ---------- CSRF para peticiones htmx ---------- */
-        var meta = document.querySelector('meta[name="csrf-token"]');
-        var csrf = meta ? meta.getAttribute('content') : '';
-        document.body.addEventListener('htmx:configRequest', function (e) {
-            if (csrf) { e.detail.headers['X-CSRF-Token'] = csrf; }
-        });
-    })();
-</script>
+<script src="/static/dashboard.js" defer></script>
 </body>
 </html>
 """

@@ -38,6 +38,7 @@ import com.automata.infra.db.ExposedImportacionesRepository
 import com.automata.infra.db.ExposedInventarioRepository
 import com.automata.infra.db.ExposedInversionRepository
 import com.automata.infra.db.ExposedProcessedEventStore
+import com.automata.infra.db.ExposedReparacionRepository
 import com.automata.infra.db.ExposedReservationRepository
 import com.automata.infra.db.ExposedSocioRepository
 import com.automata.infra.db.ExposedUnresolvedEventStore
@@ -61,6 +62,7 @@ import io.ktor.server.plugins.cors.routing.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import io.ktor.server.http.content.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -83,6 +85,40 @@ object AppStore {
     val apiIntegrations get() = state.apiIntegrationsList
     /** Lista de negociaciones recientes (simulador + canal real). Delegado seguro al estado central. */
     val chatDeals: MutableList<com.automata.app.dashboard.ChatDealLog> get() = state.chatDealsList
+
+    fun recordDeal(outcome: com.automata.app.pipeline.PipelineOutcome) {
+        val conv = outcome.conversation
+        val dealState = when (conv.state) {
+            com.automata.messaging.model.ConversationState.PAID_CONFIRMED -> com.automata.app.dashboard.DealState.PENDIENTE_ENVIO
+            com.automata.messaging.model.ConversationState.CLOSED -> com.automata.app.dashboard.DealState.CANCELADO
+            else -> com.automata.app.dashboard.DealState.EN_NEGOCIACION
+        }
+        val displayChannel = when (conv.channel.lowercase()) {
+            "whatsapp" -> "WhatsApp"
+            "instagram" -> "Instagram DM"
+            "messenger" -> "Messenger"
+            else -> conv.channel
+        }
+        val deal = com.automata.app.dashboard.ChatDealLog(
+            id = conv.conversationId,
+            customer = conv.customerPhoneOrId,
+            channel = conv.channel,
+            channelDisplayName = displayChannel,
+            productName = outcome.productName ?: "—",
+            offeredPrice = com.automata.shared.Money.of(outcome.amountCop ?: 0L),
+            dealState = dealState,
+            dealStateLabel = outcome.dealLabel,
+            timestamp = java.time.LocalTime.now().withSecond(0).withNano(0).toString(),
+            productKey = conv.activeProductKey?.value ?: ""
+        )
+        synchronized(chatDeals) {
+            chatDeals.removeAll { it.id == deal.id }
+            chatDeals.add(0, deal)
+            if (chatDeals.size > 100) {
+                chatDeals.subList(100, chatDeals.size).clear()
+            }
+        }
+    }
 
     var databaseConnected: Boolean
         get() = state.databaseConnected
@@ -309,11 +345,13 @@ fun Application.module() {
         call.response.header("X-Frame-Options", "DENY")
         call.response.header("X-Content-Type-Options", "nosniff")
         call.response.header("Referrer-Policy", "no-referrer")
-        val cspScript = if (AppConfig.appEnv == AppEnv.PRODUCTION) "script-src 'self' https://cdn.tailwindcss.com;" else "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com;"
+        // F2/S-2: CSP usa solo 'self'. htmx y el JS del dashboard se sirven desde /static/.
+        // En desarrollo se permite 'unsafe-inline' para facilitar la iteración.
+        val cspScript = if (AppConfig.appEnv == AppEnv.PRODUCTION) "script-src 'self';" else "script-src 'self' 'unsafe-inline';"
         call.response.header(
             "Content-Security-Policy",
-            "default-src 'self'; style-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com; " +
-            "$cspScript img-src 'self' data:; frame-ancestors 'none'"
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; " +
+            "$cspScript img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
         )
     }
 
@@ -468,6 +506,13 @@ fun Application.module() {
     val socioService = SocioService(socioRepo)
     val metricasService = MetricasService()
     val ventaRepo: VentaRepository = if (AppStore.databaseConnected) ExposedVentaRepository() else InMemoryVentaRepository()
+    // F3.C: Reparaciones — módulo cableado (antes solo tenía tabla y repo sin instanciar)
+    val reparacionRepo = if (AppStore.databaseConnected) {
+        try { ExposedReparacionRepository() } catch (e: Exception) {
+            logger.warn("No se pudo crear ExposedReparacionRepository: ${e.message}")
+            null
+        }
+    } else null
 
     routing {
         dashboardRoutes(dashboardGuard, llmAdapter, negotiationEngine)
@@ -483,6 +528,10 @@ fun Application.module() {
         metricasRoutes(dashboardGuard, metricasService, dbRepository ?: InMemoryInventarioRepository(), ventaRepo, socioRepo)
         ventasRoutes(dashboardGuard)
         chatRoutes(dashboardGuard, channelRouter)
+        // F3.C: Reparaciones — módulo completamente cableado
+        reparacionesRoutes(dashboardGuard, dbRepository, reparacionRepo)
         publicRoutes()
+        // F2: Archivos estáticos — htmx.min.js servido desde /static/ (CSP 'self')
+        static("/static") { resources("static") }
     }
 }

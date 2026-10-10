@@ -27,6 +27,9 @@ class ArticuloLifecycleService(
         return created
     }
 
+    /** Consulta un artículo sin modificarlo; útil para aplicar actualizaciones parciales sin borrar campos omitidos. */
+    fun buscar(key: ProductKey): InventarioItem? = repo.findByKey(key)
+
     fun editar(item: InventarioItem, usuario: String?, origen: String = "dashboard"): InventarioItem {
         val existing = repo.findByKey(item.key)
             ?: throw IllegalArgumentException("No existe el producto ${item.key.value} para editar")

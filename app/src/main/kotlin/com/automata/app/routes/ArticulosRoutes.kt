@@ -97,29 +97,57 @@ fun Route.articulosRoutes(
         val key = ProductKey(keyRaw)
         val params = call.receiveParameters()
 
-        val itemName = params["item"]?.trim()
-        val precioCompra = params["precioCompra"]?.toLongOrNull()
-        val precioPublicado = params["precioPublicado"]?.toLongOrNull()
-        val cantidad = params["cantidad"]?.toIntOrNull()
-        val tipo = params["tipo"]
-        val descripcion = params["descripcion"]
-        val marca = params["marca"]
-        val condicion = params["condicion"]
-        val ubicacion = params["ubicacion"]
-        val estadoRaw = params["estado"]
+        val existing = articuloService.buscar(key)
+        if (existing == null) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "No existe el producto ${key.value}"))
+            return@put
+        }
 
-        val itemToUpdate = com.automata.commerce.model.InventarioItem(
-            key = key,
-            item = itemName ?: keyRaw,
-            precioCompra = com.automata.shared.Money.of(precioCompra ?: 0L),
+        // PUT mantiene compatibilidad con clientes existentes, pero combina campos omitidos
+        // con los valores actuales para evitar sobrescribir precio/cantidad/estado por defecto.
+        fun parseIntField(name: String, current: Int): Int? {
+            val raw = params[name] ?: return current
+            return raw.trim().takeIf { it.isNotEmpty() }?.toIntOrNull()
+        }
+        val precioCompraRaw = params["precioCompra"]
+        val precioCompra = if (precioCompraRaw == null) existing.precioCompra.amountInCop else precioCompraRaw.trim().toLongOrNull()
+        val precioPublicadoRaw = params["precioPublicado"]
+        val precioPublicado = if (precioPublicadoRaw == null) existing.precioPublicado?.amountInCop
+            else precioPublicadoRaw.trim().takeIf { it.isNotEmpty() }?.toLongOrNull()
+        val cantidad = parseIntField("cantidad", existing.cantidad)
+
+        if (precioCompra == null || precioCompra < 0 || (precioPublicadoRaw != null && precioPublicadoRaw.isNotBlank() && precioPublicado == null) ||
+            (precioPublicado != null && precioPublicado < 0) || cantidad == null || cantidad < 0 ||
+            (params["precioCompra"] != null && params["precioCompra"]!!.trim().toLongOrNull() == null)) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Precio y cantidad deben ser números válidos no negativos"))
+            return@put
+        }
+        val itemName = params["item"]?.trim()?.ifBlank { existing.item } ?: existing.item
+        val estadoRaw = params["estado"]
+        val estado = if (estadoRaw.isNullOrBlank()) existing.estado else
+            com.automata.commerce.model.EstadoItem.desdeEtiqueta(estadoRaw)
+        if (estado == null) {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Estado de artículo inválido"))
+            return@put
+        }
+
+        fun optionalText(name: String, current: String?): String? = when {
+            !params.contains(name) -> current
+            params[name].isNullOrBlank() -> null
+            else -> params[name]!!.trim()
+        }
+
+        val itemToUpdate = existing.copy(
+            item = itemName,
+            precioCompra = com.automata.shared.Money.of(precioCompra),
             precioPublicado = precioPublicado?.let { com.automata.shared.Money.of(it) },
-            cantidad = cantidad ?: 1,
-            tipo = tipo,
-            descripcion = descripcion,
-            marca = marca,
-            condicion = condicion,
-            ubicacion = ubicacion,
-            estado = estadoRaw?.let { com.automata.commerce.model.EstadoItem.desdeEtiqueta(it) } ?: com.automata.commerce.model.EstadoItem.PUBLICADO
+            cantidad = cantidad,
+            tipo = optionalText("tipo", existing.tipo),
+            descripcion = optionalText("descripcion", existing.descripcion),
+            marca = optionalText("marca", existing.marca),
+            condicion = optionalText("condicion", existing.condicion),
+            ubicacion = optionalText("ubicacion", existing.ubicacion),
+            estado = estado
         )
 
         try {
