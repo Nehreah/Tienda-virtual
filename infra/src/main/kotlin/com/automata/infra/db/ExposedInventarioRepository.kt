@@ -60,7 +60,7 @@ class ExposedInventarioRepository : InventarioRepository {
                     it.escribir(item)
                 }
             }
-            findByKey(item.key)!!
+            findByKey(item.key) ?: error("No se pudo releer el artículo ${item.key} después de guardarlo.")
         }
 
     override fun marcarVendido(
@@ -71,6 +71,10 @@ class ExposedInventarioRepository : InventarioRepository {
         usuario: String?,
         origen: String
     ): InventarioItem? = DatabaseFactory.tx(origen, usuario) {
+        // Candado de fila (SELECT ... FOR UPDATE): si dos confirmaciones del mismo producto llegan a la vez, la segunda
+        // espera a que termine la primera y entonces lee "Vendido" (registrarVenta lanza IllegalStateException) en vez
+        // de pisar vendido_en / fecha_venta / canal_venta de la venta ya registrada.
+        if (InventarioTable.select { InventarioTable.key eq key.value }.forUpdate().firstOrNull() == null) return@tx null
         val actual = findByKey(key) ?: return@tx null
         val vendido = actual.registrarVenta(vendidoEn, fecha, canal)
 

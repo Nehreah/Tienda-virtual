@@ -49,10 +49,10 @@ data class ProductKey(val value: String) {
         /** Crea una clave aplicando la política de altas. Lanza IllegalArgumentException con el mensaje de [validar]. */
         fun parse(raw: String?): ProductKey {
             validar(raw)?.let { throw IllegalArgumentException(it) }
-            return ProductKey(raw!!.trim())
+            return ProductKey(raw?.trim().orEmpty())
         }
 
         /** Como [parse], pero devuelve null en vez de lanzar. */
-        fun parseOrNull(raw: String?): ProductKey? = if (validar(raw) == null) ProductKey(raw!!.trim()) else null
+        fun parseOrNull(raw: String?): ProductKey? = if (validar(raw) == null) ProductKey(raw?.trim().orEmpty()) else null
     }
 }

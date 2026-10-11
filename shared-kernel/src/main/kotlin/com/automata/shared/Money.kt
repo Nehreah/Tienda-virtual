@@ -15,9 +15,26 @@ data class Money(val amountInCop: Long) : Comparable<Money> {
     override fun compareTo(other: Money): Int = amountInCop.compareTo(other.amountInCop)
 
     operator fun plus(other: Money): Money = Money(amountInCop + other.amountInCop)
-    operator fun minus(other: Money): Money = Money(amountInCop - other.amountInCop)
-    
-    fun formatFormattedCop(): String = "$${String.format(java.util.Locale.US, "%,d", amountInCop).replace(',', '.')}"
+
+    /**
+     * Resta montos. Money nunca es negativo: si [other] es mayor que este monto lanza IllegalArgumentException con un
+     * mensaje claro. Si el resultado PUEDE ser negativo (ganancia, pérdida) usa [signedDiff].
+     */
+    operator fun minus(other: Money): Money {
+        require(amountInCop >= other.amountInCop) {
+            "No se puede restar ${other.formatCop()} de ${formatCop()}: Money no admite resultados negativos (usa signedDiff)."
+        }
+        return Money(amountInCop - other.amountInCop)
+    }
+
+    /** Diferencia CON signo (este monto menos [other]); puede ser negativa. */
+    fun signedDiff(other: Money): SignedCop = SignedCop(amountInCop - other.amountInCop)
+
+    /** "$1.234.567" (separador de miles con punto, igual que SignedCop.format). */
+    fun formatCop(): String = "$${String.format(java.util.Locale.US, "%,d", amountInCop).replace(',', '.')}"
+
+    @Deprecated("Nombre redundante; usa formatCop().", ReplaceWith("formatCop()"))
+    fun formatFormattedCop(): String = formatCop()
 
     companion object {
         val ZERO = Money(0)

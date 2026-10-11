@@ -249,7 +249,7 @@ internal fun leerArticulo(params: Parameters, existente: InventarioItem?): Lectu
         existente.key
     } else {
         ProductKey.validar(params["key"])?.let { return Lectura.Error(it) }
-        ProductKey(params["key"]!!.trim())
+        ProductKey(params["key"].orEmpty().trim())
     }
 
     val nombre = params["item"]?.trim().orEmpty()

@@ -122,7 +122,11 @@ class ExposedLiquidacionRepository : LiquidacionRepository {
     /** Mensaje de la excepción de PostgreSQL (RAISE EXCEPTION) sin el prefijo "ERROR:" ni las líneas de contexto. */
     internal fun mensajeSql(e: Throwable): String {
         var causa: Throwable = e
-        while (causa.cause != null && causa.cause !== causa) causa = causa.cause!!
+        while (true) {
+            val siguiente = causa.cause ?: break
+            if (siguiente === causa) break
+            causa = siguiente
+        }
         val primera = (causa.message ?: e.message ?: "Error en la base de datos")
             .lineSequence().firstOrNull { it.isNotBlank() }?.trim().orEmpty()
         return primera.removePrefix("ERROR:").trim().ifBlank { "Error en la base de datos" }

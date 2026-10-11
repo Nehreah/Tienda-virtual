@@ -126,9 +126,9 @@ class ExcelV2Parser {
             for (rowIdx in 1..publicacionSheet.lastRowNum) {
                 val row = publicacionSheet.getRow(rowIdx) ?: continue
                 val keyVal = cellText(row, pubHeaderMap["key"])
-                if (keyVal.isBlank() || !rawProducts.containsKey(keyVal)) continue
+                if (keyVal.isBlank()) continue
 
-                val targetData = rawProducts[keyVal]!!
+                val targetData = rawProducts[keyVal] ?: continue
                 pubHeaderMap.forEach { (colName, colIdx) ->
                     val cellVal = getSanitizedCellValue(row.getCell(colIdx))
                     if (cellVal.isNotBlank()) {

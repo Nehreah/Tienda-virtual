@@ -83,13 +83,21 @@ fun Route.pagosRoutes(
             return@post
         }
 
+        if (!paymentResult.persisted) {
+            logger.warn("Pago del trato $dealId confirmado SOLO en memoria: no hay repositorio de BD (modo local).")
+        }
+        if (paymentResult.isIdempotentRepeat) {
+            logger.info("Pago del trato $dealId ya estaba confirmado en BD: se omite descontar el stock en memoria otra vez.")
+        }
+
         // 2. Bloquear reserva en el pipeline y actualizar memoria tras éxito en BD
         val pipelineConfirmed = inboundPipeline.confirmPayment(dealId)
 
         if (foundProduct != null) {
             synchronized(AppStore.inventory) {
                 val currentInv = AppStore.inventory[foundProduct.key.value]
-                if (currentInv != null) {
+                // En un reintento la venta ya se descontó antes: recordSale no es idempotente y duplicaría el descuento.
+                if (currentInv != null && !paymentResult.isIdempotentRepeat) {
                     AppStore.inventory[foundProduct.key.value] = currentInv.recordSale(1, wasReserved = true)
                 }
             }

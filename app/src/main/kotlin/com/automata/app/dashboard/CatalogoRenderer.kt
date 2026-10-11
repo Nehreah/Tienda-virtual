@@ -183,8 +183,8 @@ object CatalogoRenderer {
             append("</div>")
         }
 
-        val titulo = if (edita) "Editar ${item!!.key.value}" else "Nuevo artículo"
-        val accion = if (edita) "hx-put=\"/ui/catalogo/${enc(item!!.key.value)}$qs\"" else "hx-post=\"/ui/catalogo$qs\""
+        val titulo = if (item != null) "Editar ${item.key.value}" else "Nuevo artículo"
+        val accion = if (item != null) "hx-put=\"/ui/catalogo/${enc(item.key.value)}$qs\"" else "hx-post=\"/ui/catalogo$qs\""
 
         append("""<form class="ui-card" $accion hx-target="#catalogo-panel" autocomplete="off">""")
         append("""<h3>${e(titulo)}</h3>""")
@@ -195,8 +195,8 @@ object CatalogoRenderer {
         if (!error.isNullOrBlank()) append("""<p class="module-error" role="alert">${e(error)}</p>""")
 
         append("""<div class="ui-grid">""")
-        if (edita) {
-            campo("key", "Key", item!!.key.value, extra = "readonly", ayuda = "La Key no se cambia: es el identificador del artículo.")
+        if (item != null) {
+            campo("key", "Key", item.key.value, extra = "readonly", ayuda = "La Key no se cambia: es el identificador del artículo.")
         } else {
             campo(
                 "key", "Key", v("key", ""), requerido = true,

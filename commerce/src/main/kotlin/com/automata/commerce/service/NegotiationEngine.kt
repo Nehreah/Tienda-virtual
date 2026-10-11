@@ -23,8 +23,6 @@ enum class NegotiationLevel {
     L0_PUBLISHED_PRICE,
     L1_LIGHT_DISCOUNT,
     L2_MODERATE_DISCOUNT,
-    @Deprecated("Usar counterOffer uniforme") L3_HIGH_DISCOUNT,
-    @Deprecated("Usar counterOffer uniforme") L4_FLOOR_LIMIT,
     REJECTED_BELOW_PM,
     ESCALATED_HUMAN
 }

@@ -52,10 +52,12 @@ object ExcelGenerator {
             val pmStr = item.precioMinimo?.formatFormattedCop() ?: ""
             val costoStr = item.costoTotal.formatFormattedCop()
 
-            val ganancia = if (item.estaVendido && item.vendidoEn != null) {
-                FinancialMath.gananciaNeta(item.vendidoEn!!, item.costoTotal)
-            } else if (item.precioPublicado != null) {
-                FinancialMath.gananciaNeta(item.precioPublicado!!, item.costoTotal)
+            val vendidoEn = item.vendidoEn
+            val precioPublicado = item.precioPublicado
+            val ganancia = if (item.estaVendido && vendidoEn != null) {
+                FinancialMath.gananciaNeta(vendidoEn, item.costoTotal)
+            } else if (precioPublicado != null) {
+                FinancialMath.gananciaNeta(precioPublicado, item.costoTotal)
             } else null
 
             val gananciaStr = ganancia?.format() ?: ""

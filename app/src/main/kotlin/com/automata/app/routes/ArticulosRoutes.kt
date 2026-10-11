@@ -145,7 +145,7 @@ fun Route.articulosRoutes(
 
         if (precioCompra == null || precioCompra < 0 || (precioPublicadoRaw != null && precioPublicadoRaw.isNotBlank() && precioPublicado == null) ||
             (precioPublicado != null && precioPublicado < 0) || cantidad == null || cantidad < 0 ||
-            (params["precioCompra"] != null && params["precioCompra"]!!.trim().toLongOrNull() == null)) {
+            (precioCompraRaw != null && precioCompraRaw.trim().toLongOrNull() == null)) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Precio y cantidad deben ser números válidos no negativos"))
             return@put
         }
@@ -161,7 +161,7 @@ fun Route.articulosRoutes(
         fun optionalText(name: String, current: String?): String? = when {
             !params.contains(name) -> current
             params[name].isNullOrBlank() -> null
-            else -> params[name]!!.trim()
+            else -> params[name]?.trim()
         }
 
         val itemToUpdate = existing.copy(

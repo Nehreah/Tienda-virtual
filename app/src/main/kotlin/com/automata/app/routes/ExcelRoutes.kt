@@ -53,13 +53,13 @@ fun Route.excelRoutes(
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "El archivo supera el límite de 5 MB"))
             return@post
         }
-        if (fileBytes == null) {
+        val xlsxBytes = fileBytes ?: run {
             call.respond(HttpStatusCode.BadRequest, "No se recibió archivo .xlsx")
             return@post
         }
 
         val report = excelPreviewService.generatePreview(
-            fileBytes!!,
+            xlsxBytes,
             synchronized(AppStore.products) { AppStore.products.toMap() },
             modo = modo
         )
@@ -91,13 +91,13 @@ fun Route.excelRoutes(
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "El archivo supera el límite de 5 MB"))
             return@post
         }
-        if (fileBytes == null) {
+        val xlsxBytes = fileBytes ?: run {
             call.respond(HttpStatusCode.BadRequest, "No se recibió archivo .xlsx")
             return@post
         }
 
         val report = excelPreviewService.generatePreview(
-            fileBytes!!,
+            xlsxBytes,
             synchronized(AppStore.products) { AppStore.products.toMap() },
             modo = modo
         )
@@ -116,7 +116,7 @@ fun Route.excelRoutes(
             return@post
         }
 
-        val parseResult = excelParser.parseExcel(fileBytes!!.inputStream())
+        val parseResult = excelParser.parseExcel(xlsxBytes.inputStream())
         val dbErrors = mutableListOf<String>()
 
         // Filtrar productos según el modo
@@ -225,12 +225,12 @@ fun Route.excelRoutes(
             return@post
         }
 
-        if (fileBytes == null) {
+        val xlsxBytes = fileBytes ?: run {
             call.respond(HttpStatusCode.BadRequest, "No se recibió archivo .xlsx")
             return@post
         }
 
-        val parseResult = excelParser.parseExcel(fileBytes!!.inputStream())
+        val parseResult = excelParser.parseExcel(xlsxBytes.inputStream())
 
         if (parseResult.fileError != null || parseResult.errors.isNotEmpty()) {
             val allErrors = mutableListOf<String>()
