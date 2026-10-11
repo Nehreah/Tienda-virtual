@@ -149,6 +149,9 @@ object AppConfig {
     // Instagram & Messenger Config
     val metaPageId: String get() = get("META_PAGE_ID")
 
+    /** URL pública de la tienda (https://tu-dominio.com). Se usa para el "link" de cada ítem del catálogo de Meta. */
+    val publicBaseUrl: String get() = get("PUBLIC_BASE_URL").trim().trimEnd('/')
+
     // Texto que el bot envía al cliente tras reservar (cómo pagar). Configúralo con tus datos reales.
     val paymentInstructions: String get() = get("PAYMENT_INSTRUCTIONS", "Un asesor te enviará los datos de pago en breve.")
 

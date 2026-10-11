@@ -341,12 +341,14 @@ fun Application.module() {
     val shopifyAdapter = ShopifyCatalogAdapter(
         shopDomain   = AppConfig.shopifyShopDomain,
         accessToken  = AppConfig.shopifyAccessToken,
+        apiVersion   = AppConfig.shopifyApiVersion,
         locationId   = AppConfig.shopifyLocationId
     )
     val metaCatalogAdapter = MetaShopAdapter(
         catalogId = AppConfig.metaCatalogId,
         accessToken = AppConfig.metaAccessToken,
-        countryCode = AppConfig.metaCountryCode
+        countryCode = AppConfig.metaCountryCode,
+        apiVersion = AppConfig.metaGraphApiVersion
     )
     val antiOversellSaga = AntiOversellSaga(listOf(shopifyAdapter, metaCatalogAdapter))
     val reconcileUseCase = ReconcileCatalogUseCase(listOf(shopifyAdapter, metaCatalogAdapter))
@@ -431,7 +433,8 @@ fun Application.module() {
     }
 
     val inboundWorker = if (AppStore.databaseConnected) com.automata.app.workers.InboundWebhookWorker(inboundPipeline) else null
-    val outboxWorker = if (AppStore.databaseConnected) com.automata.app.workers.OutboxWorker(listOf(shopifyAdapter, metaCatalogAdapter)) else null
+    val outboxWorker = if (AppStore.databaseConnected) com.automata.app.workers.OutboxWorker(listOf(shopifyAdapter, metaCatalogAdapter), inventarioRepo = dbRepository) else null
+    val channelPublisher = if (dbRepository != null) com.automata.app.workers.ChannelPublisher(dbRepository, listOf(shopifyAdapter, metaCatalogAdapter)) else null
 
     val pipelineScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     pipelineScope.launch {
@@ -490,7 +493,8 @@ fun Application.module() {
         dashboardRoutes(dashboardGuard, llmAdapter, negotiationEngine)
         excelRoutes(dashboardGuard, dbRepository, importacionesRepo, excelPreviewService, excelParser)
         articulosRoutes(dashboardGuard, articuloService, reservationRepo)
-        catalogoUiRoutes(dashboardGuard, articuloService, dbRepository, reservationRepo)
+        publicarRoutes(dashboardGuard, channelPublisher)
+        catalogoUiRoutes(dashboardGuard, articuloService, dbRepository, reservationRepo, channelPublisher)
         reparacionesRoutes(dashboardGuard, dbRepository, reparacionRepo)
         reconciliacionRoutes(dashboardGuard, reconcileUseCase)
         eventosDerivaRoutes(dashboardGuard, unresolvedEventStore, stockDriftDetector)

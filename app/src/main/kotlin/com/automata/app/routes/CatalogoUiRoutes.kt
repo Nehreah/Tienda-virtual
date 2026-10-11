@@ -4,6 +4,8 @@ import com.automata.app.dashboard.CatalogoRenderer
 import com.automata.app.dashboard.CatalogoRenderer.Filtro
 import com.automata.app.dashboard.DashboardGuard
 import com.automata.app.dashboard.requireDashboardAuth
+import com.automata.app.workers.ChannelPublisher
+import com.automata.app.workers.PublicarResultado
 import com.automata.commerce.model.EstadoItem
 import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.ports.InventarioRepository
@@ -30,7 +32,8 @@ fun Route.catalogoUiRoutes(
     dashboardGuard: DashboardGuard,
     articuloService: ArticuloLifecycleService?,
     inventarioRepo: InventarioRepository?,
-    reservationRepo: ReservationRepository?
+    reservationRepo: ReservationRepository?,
+    channelPublisher: ChannelPublisher? = null
 ) {
     route("/ui/catalogo") {
 
@@ -158,6 +161,30 @@ fun Route.catalogoUiRoutes(
                 call.panel(repo, filtro, status = HttpStatusCode.NotFound, error = e.mensajeLegible())
             } catch (e: Exception) {
                 call.panel(repo, filtro, status = HttpStatusCode.Conflict, error = e.mensajeLegible())
+            }
+        }
+
+        // v14: publica el artículo en Shopify o Meta (o muestra el ensayo si CHANNEL_WRITE_ENABLED=false).
+        post("/{key}/publicar") {
+            if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
+            val repo = inventarioRepo ?: return@post call.sinBaseDeDatos()
+            val publisher = channelPublisher ?: return@post call.sinBaseDeDatos()
+            val filtro = call.filtro()
+            val key = call.keyDeRuta() ?: return@post call.panel(repo, filtro, error = "Key de artículo requerida.", status = HttpStatusCode.BadRequest)
+            val canal = call.request.queryParameters["canal"].orEmpty()
+            when (val r = publisher.publicar(key, canal)) {
+                is PublicarResultado.Rechazado ->
+                    call.panel(repo, filtro, status = HttpStatusCode.fromValue(r.status), error = r.mensaje)
+                is PublicarResultado.Ensayo -> {
+                    val avisos = if (r.avisos.isEmpty()) "" else " Avisos: ${r.avisos.joinToString(" ")}"
+                    call.panel(
+                        repo, filtro,
+                        mensaje = "ENSAYO (CHANNEL_WRITE_ENABLED=false): no se escribió nada en ${r.canal}. " +
+                            "Se enviaría ${r.datos["titulo"]} a ${r.datos["precio"]} COP con stock ${r.stock}.$avisos"
+                    )
+                }
+                is PublicarResultado.Publicado ->
+                    call.panel(repo, filtro, mensaje = "Artículo ${key.value} publicado en ${r.canal}." + (r.aviso?.let { " $it" } ?: ""))
             }
         }
 

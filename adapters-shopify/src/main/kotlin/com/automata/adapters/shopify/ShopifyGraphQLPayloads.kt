@@ -122,6 +122,86 @@ object ShopifyGraphQLPayloads {
         return GraphQLPayload(query, variables)
     }
 
+    /** v14: pide el ID de la primera variante de un producto (hace falta para cambiar su precio). */
+    fun buildFirstVariantPayload(externalId: String): GraphQLPayload {
+        val query = """
+            query FirstVariant(${'$'}id: ID!) {
+              product(id: ${'$'}id) {
+                variants(first: 1) {
+                  edges {
+                    node {
+                      id
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val variables = buildJsonObject { put("id", externalId) }
+        return GraphQLPayload(query, variables)
+    }
+
+    /** v14: cambia el precio de una variante existente (productUpdate no toca precios). */
+    fun buildVariantPriceUpdatePayload(productId: String, variantId: String, price: String): GraphQLPayload {
+        val query = """
+            mutation VariantPrice(${'$'}productId: ID!, ${'$'}variants: [ProductVariantsBulkInput!]!) {
+              productVariantsBulkUpdate(productId: ${'$'}productId, variants: ${'$'}variants) {
+                productVariants {
+                  id
+                }
+                userErrors {
+                  field
+                  message
+                }
+              }
+            }
+        """.trimIndent()
+        val variables = buildJsonObject {
+            put("productId", productId)
+            putJsonArray("variants") {
+                add(buildJsonObject {
+                    put("id", variantId)
+                    put("price", price)
+                })
+            }
+        }
+        return GraphQLPayload(query, variables)
+    }
+
+    /** v14: una página del catálogo remoto (solo lectura) para la reconciliación. */
+    fun buildProductsPagePayload(cursor: String?): GraphQLPayload {
+        val query = """
+            query ProductsPage(${'$'}cursor: String) {
+              products(first: 50, after: ${'$'}cursor) {
+                pageInfo {
+                  hasNextPage
+                  endCursor
+                }
+                edges {
+                  node {
+                    id
+                    title
+                    status
+                    totalInventory
+                    variants(first: 1) {
+                      edges {
+                        node {
+                          sku
+                          price
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val variables = buildJsonObject {
+            if (cursor != null) put("cursor", cursor)
+        }
+        return GraphQLPayload(query, variables)
+    }
+
     // Métodos legacy para compatibilidad si alguna prueba los requiere directamente como String
     fun buildProductCreateMutation(product: PublicProductDto): String = buildProductCreatePayload(product).query
     fun buildProductUpdateMutation(externalId: String, product: PublicProductDto): String = buildProductUpdatePayload(externalId, product).query

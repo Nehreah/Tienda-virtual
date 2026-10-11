@@ -23,6 +23,15 @@ SHOPIFY_WEBHOOK_SECRET=shpss_xxxxxxxxxxxxxxxxxxxxxxx
 # Ejemplo: gid://shopify/Location/12345678901
 SHOPIFY_LOCATION_ID=gid://shopify/Location/1
 
+# v14 · Sincronización con las tiendas. Por seguridad está en false: los botones "↗ Shopify" / "↗ Meta" del catálogo solo
+# hacen un ENSAYO (muestran qué se enviaría) y el worker de salida no escribe nada. Pásalo a true SOLO cuando
+# hayas probado con una tienda y un catálogo de desarrollo.
+CHANNEL_WRITE_ENABLED=false
+
+# v14 · URL pública de tu tienda (sin barra final). Meta exige un enlace por cada producto: si el artículo no tiene
+# "Enlace de la publicación", se usa PUBLIC_BASE_URL/public/p/{Key}.
+# PUBLIC_BASE_URL=https://tu-dominio.com
+
 # Meta Commerce Catalog API & Webhooks (WhatsApp / Instagram DM / Facebook Messenger)
 META_CATALOG_ID=meta_cat_123456
 META_ACCESS_TOKEN=EAAGxxxxxxxxxxxxxxxxxxxxxxx

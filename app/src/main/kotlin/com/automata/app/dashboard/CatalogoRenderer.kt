@@ -143,6 +143,10 @@ object CatalogoRenderer {
                     """<button type="button" class="ui-link-btn" hx-get="/ui/catalogo/$keyEnc/editar$qs" """ +
                         """hx-target="#catalogo-form-slot">Editar</button>"""
                 )
+                if (item.estado == EstadoItem.PUBLICADO || item.estado == EstadoItem.NEGOCIACION) {
+                    append(botonPublicar(item, keyEnc, qs, "shopify", "Shopify"))
+                    append(botonPublicar(item, keyEnc, qs, "meta_catalogo", "Meta"))
+                }
                 append(
                     """<button type="button" class="ui-link-btn" hx-get="/ui/catalogo/$keyEnc/archivar$qs" """ +
                         """hx-target="#catalogo-modal">Archivar</button>"""
@@ -152,6 +156,11 @@ object CatalogoRenderer {
         }
         append("</div></td></tr>")
     }
+
+    /** v14: publica el artículo en un canal. Con CHANNEL_WRITE_ENABLED=false solo hace un ensayo (no escribe nada). */
+    private fun botonPublicar(item: InventarioItem, keyEnc: String, qs: String, canal: String, etiqueta: String): String =
+        """<button type="button" class="ui-link-btn" title="Publicar en $etiqueta" hx-post="/ui/catalogo/$keyEnc/publicar$qs&canal=$canal" """ +
+            """hx-target="#catalogo-panel" hx-confirm="${e("¿Publicar ${item.key.value} en $etiqueta?")}">↗ $etiqueta</button>"""
 
     private fun botonEliminar(item: InventarioItem, keyEnc: String, qs: String): String =
         """<button type="button" class="ui-link-btn danger" hx-delete="/ui/catalogo/$keyEnc$qs" """ +
