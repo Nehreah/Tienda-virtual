@@ -43,11 +43,16 @@ data class OutboxEntryRecord(
  * Un artículo que no está a la venta (archivado, Comprado, Vendido...) siempre se manda con stock 0.
  *
  * [inventarioRepo] es opcional solo para las pruebas; sin él no se pueden armar los datos del producto.
+ *
+ * v15 · Recuperación de filas huérfanas: al tomar un aviso se marca SENDING y se le pone un "arriendo" de [leaseSeconds]
+ * en proxima_ejecucion. Si la app se cae a mitad del envío, cuando vence el arriendo otro ciclo vuelve a tomar la fila
+ * (el envío es idempotente: stock absoluto). Si ya agotó [maxRetries] intentos, pasa a DEAD.
  */
 class OutboxWorker(
     private val adapters: List<CatalogPublishingPort>,
     private val maxRetries: Int = 3,
-    private val inventarioRepo: InventarioRepository? = null
+    private val inventarioRepo: InventarioRepository? = null,
+    private val leaseSeconds: Long = 300
 ) {
     private val logger = LoggerFactory.getLogger(OutboxWorker::class.java)
 
@@ -71,7 +76,7 @@ class OutboxWorker(
         val pending = transaction {
             val now = Instant.now()
             OutboxTable.select {
-                (OutboxTable.status eq "PENDING") or (OutboxTable.status eq "FAILED")
+                (OutboxTable.status eq "PENDING") or (OutboxTable.status eq "FAILED") or (OutboxTable.status eq "SENDING")
             }
                 .andWhere { OutboxTable.proximaEjecucion lessEq now }
                 .orderBy(OutboxTable.createdAt)
@@ -81,11 +86,35 @@ class OutboxWorker(
 
         var processedCount = 0
         for (entry in pending) {
+            val ahora = Instant.now()
+
+            // Fila huérfana (quedó en SENDING y su arriendo venció): si ya se interrumpió demasiadas veces, se abandona.
+            if (entry.status == "SENDING" && entry.attempts >= maxRetries) {
+                transaction {
+                    OutboxTable.update({
+                        (OutboxTable.eventId eq entry.eventId) and
+                            (OutboxTable.status eq "SENDING") and
+                            (OutboxTable.proximaEjecucion lessEq ahora)
+                    }) { row ->
+                        row[OutboxTable.status] = "DEAD"
+                        row[OutboxTable.errorMessage] = "Abandonado: quedó sin terminar tras ${entry.attempts} intentos (el proceso se interrumpió mientras enviaba)"
+                    }
+                }
+                continue
+            }
+
+            // Toma atómica: solo una instancia gana la fila. La condición proxima_ejecucion <= ahora evita que dos
+            // ciclos tomen a la vez una fila huérfana, porque el primero le renueva el arriendo.
             val marked = transaction {
-                OutboxTable.update({ (OutboxTable.eventId eq entry.eventId) and ((OutboxTable.status eq "PENDING") or (OutboxTable.status eq "FAILED")) }) { row ->
+                OutboxTable.update({
+                    (OutboxTable.eventId eq entry.eventId) and
+                        ((OutboxTable.status eq "PENDING") or (OutboxTable.status eq "FAILED") or (OutboxTable.status eq "SENDING")) and
+                        (OutboxTable.proximaEjecucion lessEq ahora)
+                }) { row ->
                     row[OutboxTable.status] = "SENDING"
                     row[OutboxTable.attempts] = entry.attempts + 1
-                    row[OutboxTable.lastAttemptAt] = Instant.now()
+                    row[OutboxTable.lastAttemptAt] = ahora
+                    row[OutboxTable.proximaEjecucion] = ahora.plusSeconds(leaseSeconds)
                 }
             }
             if (marked == 0) continue

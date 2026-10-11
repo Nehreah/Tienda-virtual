@@ -307,7 +307,8 @@ fun Application.module() {
     val corsHost = AppConfig.corsAllowedHost.trim().removePrefix("https://").removePrefix("http://").trimEnd('/')
     if (corsHost.isNotBlank()) {
         install(CORS) {
-            allowHost(corsHost, schemes = listOf("https", "http"))
+            // En producción solo HTTPS; en local se permite también http (desarrollo).
+            allowHost(corsHost, schemes = if (AppConfig.appEnv == AppEnv.PRODUCTION) listOf("https") else listOf("https", "http"))
         }
     }
 
@@ -388,7 +389,7 @@ fun Application.module() {
         logger.warn("ADVERTENCIA: META_APP_SECRET vacío; POST /webhooks/meta responderá 503 hasta que lo definas.")
     }
     if (AppConfig.metaWebhookVerifyToken.isBlank()) {
-        logger.warn("ADVERTENCIA: META_WEBHOOK_VERHOOK_VERIFY_TOKEN vacío; Meta no podrá verificar GET /webhooks/meta.")
+        logger.warn("ADVERTENCIA: META_WEBHOOK_VERIFY_TOKEN vacío; Meta no podrá verificar GET /webhooks/meta.")
     }
 
     val securityPlan = cachedSecurityPlan ?: DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword)
