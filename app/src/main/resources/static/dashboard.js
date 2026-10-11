@@ -37,6 +37,7 @@
         var MODULE_PANELS = {
             socios: [{ url: '/api/socios', target: 'socios-panel' }],
             reparaciones: [{ url: '/ui/reparaciones', target: 'reparaciones-panel' }],
+            metricas: [{ url: '/api/metricas?p=generales', target: 'metricas-financieras-panel' }],
             catalogo: [
                 { url: '/ui/catalogo', target: 'catalogo-panel' },
                 { url: '/api/inventario/tabla', target: 'inventario-inversion-panel' }
@@ -77,6 +78,24 @@
         /* ---------- Autodetección Callback URL de Meta ---------- */
         var cbInput = document.getElementById('meta-callback-url-input');
         if (cbInput) { cbInput.value = window.location.origin + '/webhooks/meta'; }
+        var cbBtn = document.getElementById('btn-copiar-meta-url');
+        if (cbBtn && cbInput) {
+            cbBtn.addEventListener('click', function () {
+                if (navigator.clipboard && navigator.clipboard.writeText) {
+                    navigator.clipboard.writeText(cbInput.value).then(function () {
+                        showToast('Callback URL copiada al portapapeles');
+                    }).catch(function () {
+                        cbInput.select();
+                        document.execCommand('copy');
+                        showToast('Callback URL copiada al portapapeles');
+                    });
+                } else {
+                    cbInput.select();
+                    document.execCommand('copy');
+                    showToast('Callback URL copiada al portapapeles');
+                }
+            });
+        }
 
         /* ---------- Menú móvil ---------- */
         document.getElementById('menu-btn').addEventListener('click', function () {
@@ -169,11 +188,20 @@
 
         /* Modales: se cierran con [data-modal-close], con Escape o haciendo clic fuera del cuadro. */
         function closeModals() {
-            document.querySelectorAll('.ui-modal-backdrop').forEach(function (m) { m.remove(); });
+            document.querySelectorAll('.ui-modal-backdrop').forEach(function (m) {
+                /* Un modal fijo de la página (data-static) se oculta para poder reabrirlo; los que llegan por htmx se eliminan. */
+                if (m.hasAttribute('data-static')) { m.hidden = true; } else { m.remove(); }
+            });
         }
         document.addEventListener('click', function (e) {
             var t = e.target;
             if (!t || !t.closest) { return; }
+            var opener = t.closest('[data-modal-open]');
+            if (opener) {
+                var modal = document.querySelector(opener.getAttribute('data-modal-open'));
+                if (modal) { modal.hidden = false; }
+                return;
+            }
             if (t.closest('[data-modal-close]')) { e.preventDefault(); closeModals(); return; }
             if (t.classList && t.classList.contains('ui-modal-backdrop')) { closeModals(); return; }
             var clear = t.closest('[data-clear]');
@@ -184,5 +212,15 @@
         });
         document.addEventListener('keydown', function (e) {
             if (e.key === 'Escape') { closeModals(); }
+        });
+
+        /* Venta manual: según el canal se muestra el detalle (Otro) o el número de pedido (Shopify). */
+        document.addEventListener('change', function (e) {
+            var sel = e.target;
+            if (!sel || !sel.hasAttribute || !sel.hasAttribute('data-canal-toggle')) { return; }
+            var detalle = document.getElementById('campo-canal-detalle');
+            var pedido = document.getElementById('campo-order-id');
+            if (detalle) { detalle.hidden = sel.value !== 'otro'; }
+            if (pedido) { pedido.hidden = sel.value !== 'shopify'; }
         });
     })();

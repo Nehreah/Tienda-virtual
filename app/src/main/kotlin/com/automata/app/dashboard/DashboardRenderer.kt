@@ -1169,7 +1169,7 @@ object DashboardRenderer {
                             <label style="font-size:12.5px;font-weight:600;color:var(--muted)">Callback URL (URL de retorno):</label>
                             <div class="form-row">
                                 <input type="text" id="meta-callback-url-input" class="input" readonly style="font-family:var(--mono);font-size:12.5px;">
-                                <button type="button" class="btn btn-sm btn-primary" onclick="navigator.clipboard.writeText(document.getElementById('meta-callback-url-input').value);alert('Callback URL copiada al portapapeles');">Copiar URL</button>
+                                <button type="button" class="btn btn-sm btn-primary" id="btn-copiar-meta-url">Copiar URL</button>
                             </div>
                             <p style="font-size:12px;color:var(--muted)">Calculada dinámicamente según el host actual (local, ngrok o servidor de producción).</p>
                         </div>
@@ -1374,6 +1374,10 @@ object DashboardRenderer {
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+                <div class="card module-panel">
+                    <div id="metricas-financieras-panel" class="module-loading" aria-live="polite">Cargando métricas financieras…</div>
                 </div>
             </section>
 

@@ -119,8 +119,10 @@ object AppStore {
             ),
             ApiIntegrationStatus(
                 "Meta Catalog API", "Catálogo",
-                ApiStatus.DEGRADADO.takeIf { configured("META_CATALOG_ID", "META_ACCESS_TOKEN") } ?: ApiStatus.DESHABILITADO,
-                missing("Adaptador pendiente: aún NO publica ni actualiza productos en Meta", "META_CATALOG_ID", "META_ACCESS_TOKEN"),
+                status(configured("META_CATALOG_ID", "META_ACCESS_TOKEN")),
+                if (configured("META_CATALOG_ID", "META_ACCESS_TOKEN"))
+                    "Credenciales presentes (${AppConfig.metaGraphApiVersion}) • publica y actualiza el catálogo • sin verificación en vivo"
+                else missing("Faltan credenciales de Meta Catalog", "META_CATALOG_ID", "META_ACCESS_TOKEN"),
                 noCheck
             ),
             ApiIntegrationStatus(
@@ -150,7 +152,7 @@ object AppStore {
             ApiIntegrationStatus(
                 "Gemini LLM Engine", "IA & NLP",
                 status(configured("GEMINI_API_KEY")),
-                if (configured("GEMINI_API_KEY")) "API key presente • el intérprete actual usa reglas locales (aún no llama a Gemini)"
+                if (configured("GEMINI_API_KEY")) "API key presente • interpreta los mensajes con Gemini; si falla o se agota el cupo diario usa reglas locales"
                 else missing("Falta GEMINI_API_KEY • el flujo usa el intérprete por reglas locales", "GEMINI_API_KEY"),
                 noCheck
             ),
