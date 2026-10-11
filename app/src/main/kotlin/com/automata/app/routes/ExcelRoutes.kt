@@ -40,8 +40,8 @@ fun Route.excelRoutes(
 
         multipart.forEachPart { part ->
             if (part is PartData.FileItem && !tooLarge) {
-                val bytes = part.streamProvider().readBytes()
-                if (bytes.size > 5_242_880) {
+                val bytes = part.streamProvider().use { it.readBytesLimited(MAX_EXCEL_BYTES) }
+                if (bytes == null) {
                     tooLarge = true
                 } else {
                     fileBytes = bytes
@@ -78,8 +78,8 @@ fun Route.excelRoutes(
 
         multipart.forEachPart { part ->
             if (part is PartData.FileItem && !tooLarge) {
-                val bytes = part.streamProvider().readBytes()
-                if (bytes.size > 5_242_880) {
+                val bytes = part.streamProvider().use { it.readBytesLimited(MAX_EXCEL_BYTES) }
+                if (bytes == null) {
                     tooLarge = true
                 } else {
                     fileBytes = bytes
@@ -211,8 +211,8 @@ fun Route.excelRoutes(
 
         multipart.forEachPart { part ->
             if (part is PartData.FileItem && !tooLarge) {
-                val bytes = part.streamProvider().readBytes()
-                if (bytes.size > 5_242_880) {
+                val bytes = part.streamProvider().use { it.readBytesLimited(MAX_EXCEL_BYTES) }
+                if (bytes == null) {
                     tooLarge = true
                 } else {
                     fileBytes = bytes

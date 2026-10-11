@@ -20,6 +20,9 @@ import org.slf4j.LoggerFactory
 
 private val logger = LoggerFactory.getLogger("PagosRoutes")
 
+/** Cada trato del bot reserva y vende exactamente 1 unidad (el pipeline reserva con quantity = 1). */
+private const val UNIDADES_POR_TRATO = 1
+
 fun Route.pagosRoutes(
     dashboardGuard: DashboardGuard,
     confirmPaymentUseCase: ConfirmPaymentUseCase,
@@ -46,19 +49,28 @@ fun Route.pagosRoutes(
             return@post
         }
 
-        val foundProduct = synchronized(AppStore.products) {
-            if (deal != null && deal.productKey.isNotBlank()) {
-                AppStore.products[deal.productKey]
-            } else if (deal != null) {
-                AppStore.products.values.firstOrNull { it.itemName.equals(deal.productName, ignoreCase = true) }
-            } else null
+        // El trato vive en memoria (AppStore.chatDeals) y se pierde al reiniciar; la conversación persiste en BD.
+        // Si el trato ya no está en memoria, se reconstruye desde la conversación para poder confirmar el pago igual.
+        val conversation = conversationStore?.findById(dealId)
+        if (deal == null && conversation == null) {
+            call.respond(HttpStatusCode.NotFound, mapOf("error" to "Trato no encontrado"))
+            return@post
         }
 
-        val productKey = foundProduct?.key ?: ProductKey(deal?.productKey ?: "")
-        
-        // Obtener el precio acordado de la conversación en BD si está disponible
-        val agreedPriceCop = conversationStore?.findById(dealId)?.agreedPriceCop
-        val salePrice = agreedPriceCop?.let { Money.of(it) }
+        val keyStr = deal?.productKey?.takeIf { it.isNotBlank() } ?: conversation?.activeProductKey?.value
+        val foundProduct = synchronized(AppStore.products) {
+            when {
+                keyStr != null -> AppStore.products[keyStr]
+                deal != null -> AppStore.products.values.firstOrNull { it.itemName.equals(deal.productName, ignoreCase = true) }
+                else -> null
+            }
+        }
+
+        val productKey = foundProduct?.key ?: ProductKey(keyStr ?: "")
+        val dealChannel = deal?.channel ?: conversation?.channel ?: "dashboard"
+
+        // Precio acordado de la conversación (BD) si existe; si no, el del trato en memoria o el publicado.
+        val salePrice = conversation?.agreedPriceCop?.let { Money.of(it) }
             ?: deal?.offeredPrice
             ?: foundProduct?.publishedPrice
             ?: Money.of(0)
@@ -74,7 +86,7 @@ fun Route.pagosRoutes(
                 dealId = dealId,
                 productKey = productKey,
                 salePrice = salePrice,
-                channel = deal?.channel ?: "dashboard"
+                channel = dealChannel
             )
         )
 
@@ -98,7 +110,7 @@ fun Route.pagosRoutes(
                 val currentInv = AppStore.inventory[foundProduct.key.value]
                 // En un reintento la venta ya se descontó antes: recordSale no es idempotente y duplicaría el descuento.
                 if (currentInv != null && !paymentResult.isIdempotentRepeat) {
-                    AppStore.inventory[foundProduct.key.value] = currentInv.recordSale(1, wasReserved = true)
+                    AppStore.inventory[foundProduct.key.value] = currentInv.recordSale(UNIDADES_POR_TRATO, wasReserved = true)
                 }
             }
 
@@ -107,7 +119,7 @@ fun Route.pagosRoutes(
                 AppStore.inventory[foundProduct.key.value]?.stockVivo ?: 0
             }
             try {
-                antiOversellSaga.executeRetractionSaga(foundProduct.key, deal?.channel ?: "dashboard", externalMappings, remaining)
+                antiOversellSaga.executeRetractionSaga(foundProduct.key, dealChannel, externalMappings, remaining)
             } catch (e: Exception) {
                 logger.error("AntiOversellSaga error: ${e.message}", e)
             }

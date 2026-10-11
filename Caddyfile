@@ -1,0 +1,8 @@
+# HTTPS automático (Let's Encrypt) para el dominio definido en DOMAIN. Los puertos 80 y 443 deben estar abiertos.
+{$DOMAIN} {
+	encode gzip
+	reverse_proxy app:8080 {
+		# El chat en tiempo casi real usa Server-Sent Events: no se debe acumular la respuesta en el proxy.
+		flush_interval -1
+	}
+}

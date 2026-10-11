@@ -71,6 +71,7 @@ DASHBOARD_PASSWORD=
 
 # Opcionales (descomenta cuando publiques):
 # CORS_ALLOWED_HOST=tu-dominio.com -> sin esta variable CORS no se instala (solo mismo origen). El tablero NO necesita CORS.
+# TRUST_PROXY_HOPS=1 -> cuántos proxies de confianza hay delante (por defecto 1). La IP real es la entrada N desde el final de X-Forwarded-For.
 # TRUST_PROXY=true -> solo si hay UN proxy inverso de confianza delante (nginx, Caddy): la IP del cliente y el host se leen
 #                     de X-Forwarded-For / X-Forwarded-Host. Sin proxy déjalo en false: se podrían falsear.
 

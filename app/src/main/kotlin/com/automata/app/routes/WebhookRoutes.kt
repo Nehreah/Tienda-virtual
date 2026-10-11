@@ -76,9 +76,9 @@ fun Route.webhookRoutes(
         val topic = call.request.headers["X-Shopify-Topic"]
         val hmac = call.request.headers["X-Shopify-Hmac-SHA256"]
         
-        // Fase 4.2 / Hallazgo 6: lectura segura con verificación de tamaño en bytes recibidos (anti-chunked OOM)
-        val bodyBytes = call.receive<ByteArray>()
-        if (bodyBytes.size > 1_048_576) {
+        // Lectura con tope: se corta al pasar 1 MB (también en cuerpos chunked) sin cargar todo en memoria
+        val bodyBytes = call.receiveBytesLimited(MAX_WEBHOOK_BYTES)
+        if (bodyBytes == null) {
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "Payload demasiado grande (máx 1 MB)"))
             return@post
         }
@@ -171,9 +171,9 @@ fun Route.webhookRoutes(
     }
 
     post("/webhooks/meta") {
-        // Fase 4.2 / Hallazgo 6: lectura segura con verificación de tamaño en bytes recibidos (anti-chunked OOM)
-        val bodyBytes = call.receive<ByteArray>()
-        if (bodyBytes.size > 1_048_576) {
+        // Lectura con tope: se corta al pasar 1 MB (también en cuerpos chunked) sin cargar todo en memoria
+        val bodyBytes = call.receiveBytesLimited(MAX_WEBHOOK_BYTES)
+        if (bodyBytes == null) {
             call.respond(HttpStatusCode.PayloadTooLarge, mapOf("error" to "Payload demasiado grande (máx 1 MB)"))
             return@post
         }
@@ -192,13 +192,26 @@ fun Route.webhookRoutes(
 
         val inboundEvents = metaWebhookReceiver.parseInboundPayload(bodyBytes.toString(Charsets.UTF_8))
 
+        var algunFallo = false
         for (event in inboundEvents) {
             if (!processedEvents.tryStartProcessing(event.channel, event.messageId)) continue
-            
+
             if (inboundWorker != null) {
-                // Cola durable en BD: guardar primero antes de responder 200 a Meta
-                inboundWorker.enqueue(event.channel, event.senderId, event.messageId, event.text)
-                processedEvents.markDone(event.channel, event.messageId)
+                // Cola durable en BD: guardar primero antes de responder 200 a Meta.
+                // Si guardar falla, se marca FAILED y se responde 500: Meta reintenta y el evento se puede retomar
+                // (antes quedaba en PROCESSING y el reintento se ignoraba como duplicado: mensaje perdido).
+                try {
+                    inboundWorker.enqueue(event.channel, event.senderId, event.messageId, event.text)
+                    processedEvents.markDone(event.channel, event.messageId)
+                } catch (e: Exception) {
+                    if (e is CancellationException) {
+                        processedEvents.markFailed(event.channel, event.messageId, "Cancelled")
+                        throw e
+                    }
+                    processedEvents.markFailed(event.channel, event.messageId, e.message)
+                    logger.error("No se pudo encolar mensaje de [${event.channel}] ${event.senderId}: ${e.message}", e)
+                    algunFallo = true
+                }
             } else {
                 // Modo sin BD: procesar en segundo plano en memoria
                 pipelineScope.launch {
@@ -216,6 +229,10 @@ fun Route.webhookRoutes(
             }
         }
 
+        if (algunFallo) {
+            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to "No se pudo guardar el evento; reintenta"))
+            return@post
+        }
         call.respond(HttpStatusCode.OK, mapOf("status" to "EVENT_RECEIVED"))
     }
 }

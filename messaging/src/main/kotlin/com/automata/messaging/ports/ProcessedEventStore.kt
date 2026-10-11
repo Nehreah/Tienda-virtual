@@ -21,7 +21,15 @@ interface ProcessedEventStore {
     fun markFailed(channel: String, externalEventId: String, errorMessage: String? = null)
 }
 
-class InMemoryProcessedEventStore(private val maxEntries: Int = 10_000) : ProcessedEventStore {
+class InMemoryProcessedEventStore(
+    private val maxEntries: Int = 10_000,
+    /** Un PROCESSING más viejo que esto se considera abandonado y se puede retomar (igual que en la BD). */
+    private val staleAfterMillis: Long = 5 * 60_000L,
+    private val clock: () -> Long = System::currentTimeMillis
+) : ProcessedEventStore {
+
+    private val startedAt = HashMap<String, Long>()
+
 
     private val states = object : LinkedHashMap<String, EventProcessingState>(16, 0.75f, false) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, EventProcessingState>): Boolean =
@@ -31,10 +39,14 @@ class InMemoryProcessedEventStore(private val maxEntries: Int = 10_000) : Proces
     override fun tryStartProcessing(channel: String, externalEventId: String): Boolean = synchronized(states) {
         val key = "$channel|$externalEventId"
         val current = states[key]
-        if (current == EventProcessingState.DONE || current == EventProcessingState.PROCESSING) {
+        val now = clock()
+        val abandonado = current == EventProcessingState.PROCESSING && now - (startedAt[key] ?: 0L) > staleAfterMillis
+        if (current == EventProcessingState.DONE || (current == EventProcessingState.PROCESSING && !abandonado)) {
             false
         } else {
             states[key] = EventProcessingState.PROCESSING
+            startedAt[key] = now
+            if (startedAt.size > maxEntries * 2) startedAt.keys.retainAll(states.keys)
             true
         }
     }

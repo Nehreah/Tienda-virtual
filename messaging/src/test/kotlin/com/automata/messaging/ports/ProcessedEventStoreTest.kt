@@ -27,4 +27,25 @@ class ProcessedEventStoreTest {
         assertTrue(store.markIfNew("c", "3")) // expulsa "1"
         assertTrue(store.markIfNew("c", "1")) // ya fue olvidado
     }
+
+    @Test
+    fun `an event stuck in PROCESSING can be retaken after the stale timeout`() {
+        var now = 0L
+        val store = InMemoryProcessedEventStore(staleAfterMillis = 1_000L, clock = { now })
+        assertTrue(store.tryStartProcessing("meta", "e1"))
+        now = 500L
+        assertFalse(store.tryStartProcessing("meta", "e1"))   // aun en curso
+        now = 1_501L
+        assertTrue(store.tryStartProcessing("meta", "e1"))    // proceso abandonado: se retoma
+    }
+
+    @Test
+    fun `a failed event can be retried but a done one cannot`() {
+        val store = InMemoryProcessedEventStore()
+        assertTrue(store.tryStartProcessing("meta", "e2"))
+        store.markFailed("meta", "e2", "boom")
+        assertTrue(store.tryStartProcessing("meta", "e2"))
+        store.markDone("meta", "e2")
+        assertFalse(store.tryStartProcessing("meta", "e2"))
+    }
 }

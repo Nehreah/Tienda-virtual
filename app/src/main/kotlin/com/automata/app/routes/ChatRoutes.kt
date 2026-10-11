@@ -9,7 +9,14 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.transactions.transaction
@@ -238,9 +245,11 @@ fun Route.chatRoutes(
         var lastSeenId = call.request.headers["Last-Event-ID"]?.toLongOrNull() ?: 0L
 
         call.respondTextWriter(ContentType.Text.EventStream) {
-            while (true) {
+            // Termina cuando el cliente se desconecta (corrutina cancelada) en vez de sondear la BD para siempre.
+            while (currentCoroutineContext().isActive) {
                 val events = try {
-                    transaction {
+                    // JDBC es bloqueante: se ejecuta en el dispatcher de IO, no en el hilo de la petición.
+                    withContext(Dispatchers.IO) { transaction {
                         exec("SELECT id, conversation_id, tipo FROM tienda.chat_eventos WHERE id > ? ORDER BY id ASC LIMIT 50",
                             args = listOf(LongColumnType() to lastSeenId)) { rs ->
                             val list = mutableListOf<Triple<Long, String, String>>()
@@ -249,7 +258,9 @@ fun Route.chatRoutes(
                             }
                             list
                         }
-                    } ?: emptyList()
+                    } } ?: emptyList()
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
                     emptyList()
                 }
@@ -259,7 +270,8 @@ fun Route.chatRoutes(
                         lastSeenId = evt.first
                         write("id: ${evt.first}\n")
                         write("event: ${evt.third}\n")
-                        write("data: {\"convId\":\"${evt.second}\",\"tipo\":\"${evt.third}\"}\n\n")
+                        // JSON generado con serializador: convId viene de ids externos y no se debe interpolar a mano.
+                        write("data: ${buildJsonObject { put("convId", evt.second); put("tipo", evt.third) }}\n\n")
                         flush()
                     }
                 } else {

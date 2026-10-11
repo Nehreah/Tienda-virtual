@@ -39,10 +39,14 @@ object DatabaseFactory {
             "Falta DATABASE_URL. Configúrala en local.properties o como variable de entorno (ver local.properties.example)."
         }
 
-        // M11: En producción sslmode=require es obligatorio
+        // M11: En producción sslmode=require es obligatorio, salvo cuando la base está en la red interna del propio
+        // servidor (contenedor "db" de docker-compose o localhost): ahí el tráfico nunca sale a Internet.
         if (AppConfig.appEnv == AppEnv.PRODUCTION) {
-            check(url.contains("sslmode=require", ignoreCase = true) || url.contains("ssl=true", ignoreCase = true)) {
-                "M11: Conexión a la base de datos rechazada. En producción sslmode=require es OBLIGATORIO en la URL."
+            val host = Regex("^jdbc:postgresql://([^:/?]+)", RegexOption.IGNORE_CASE).find(url)?.groupValues?.get(1)?.lowercase()
+            val redInterna = host in setOf("db", "postgres", "localhost", "127.0.0.1")
+            check(redInterna || url.contains("sslmode=require", ignoreCase = true) || url.contains("ssl=true", ignoreCase = true)) {
+                "M11: Conexión a la base de datos rechazada. En producción sslmode=require es OBLIGATORIO en la URL " +
+                    "(solo se permite sin SSL si el host es 'db', 'postgres' o 'localhost', es decir, la red interna)."
             }
         }
 

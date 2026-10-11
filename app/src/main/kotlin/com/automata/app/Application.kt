@@ -397,8 +397,16 @@ fun Application.module() {
     val dashboardGuard = DashboardGuard(
         auth = securityPlan.auth,
         throttle = AuthThrottle(),
-        trustProxy = AppConfig.trustProxyHeaders
+        trustProxy = AppConfig.trustProxyHeaders,
+        trustProxyHops = AppConfig.trustProxyHops
     )
+    if (!AppConfig.trustProxyHeaders && AppConfig.appEnv == AppEnv.PRODUCTION) {
+        logger.warn(
+            "AVISO: TRUST_PROXY=false. Si hay un proxy inverso (nginx, Caddy, Cloudflare) delante, todos los clientes " +
+                "se verán con la IP del proxy y 5 claves erróneas de cualquiera bloquearán también al administrador. " +
+                "Si tienes proxy de confianza, define TRUST_PROXY=true (y TRUST_PROXY_HOPS si hay más de uno)."
+        )
+    }
 
     val llmAdapter = GeminiLlmAdapter(apiKey = AppConfig.geminiApiKey).also { adapter ->
         if (AppConfig.geminiApiKey.isBlank()) {

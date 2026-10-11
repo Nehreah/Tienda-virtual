@@ -15,9 +15,14 @@ import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.update
+import org.jetbrains.exposed.sql.or
+import java.time.Duration
+import java.time.Instant
 
 class ExposedProcessedEventStore(
-    private val fallback: ProcessedEventStore = InMemoryProcessedEventStore()
+    private val fallback: ProcessedEventStore = InMemoryProcessedEventStore(),
+    /** Tiempo tras el cual un evento en PROCESSING se considera abandonado (el proceso murió) y puede reintentarse. */
+    private val staleAfter: Duration = Duration.ofMinutes(5)
 ) : ProcessedEventStore {
 
     @Volatile private var warned = false
@@ -31,21 +36,29 @@ class ExposedProcessedEventStore(
 
                 if (existing != null) {
                     val status = existing[EventosProcesadosTable.estado]
-                    if (status == "DONE" || status == "PROCESSING") {
-                        false
-                    } else {
-                        EventosProcesadosTable.update({
-                            (EventosProcesadosTable.canal eq channel) and (EventosProcesadosTable.eventoExternoId eq externalEventId)
-                        }) {
-                            it[estado] = "PROCESSING"
-                        }
-                        true
+                    val ahora = Instant.now()
+                    val vencido = ahora.minus(staleAfter)
+                    // Un PROCESSING viejo es de un proceso que se cayó a mitad: se puede retomar. El UPDATE condicional
+                    // garantiza que si dos reintentos llegan a la vez, solo uno lo reclama (filas afectadas == 1).
+                    val reclamado = EventosProcesadosTable.update({
+                        (EventosProcesadosTable.canal eq channel) and
+                            (EventosProcesadosTable.eventoExternoId eq externalEventId) and
+                            (
+                                (EventosProcesadosTable.estado eq "FAILED") or
+                                ((EventosProcesadosTable.estado eq "PROCESSING") and
+                                    (EventosProcesadosTable.actualizadoEn less vencido))
+                            )
+                    }) {
+                        it[estado] = "PROCESSING"
+                        it[actualizadoEn] = ahora
                     }
+                    if (status == "DONE") false else reclamado == 1
                 } else {
                     EventosProcesadosTable.insert {
                         it[canal] = channel
                         it[eventoExternoId] = externalEventId
                         it[estado] = "PROCESSING"
+                        it[actualizadoEn] = Instant.now()
                     }
                     true
                 }
@@ -64,6 +77,7 @@ class ExposedProcessedEventStore(
                     (EventosProcesadosTable.canal eq channel) and (EventosProcesadosTable.eventoExternoId eq externalEventId)
                 }) {
                     it[estado] = "DONE"
+                    it[actualizadoEn] = Instant.now()
                 }
             }
         } catch (e: Exception) {
@@ -78,6 +92,7 @@ class ExposedProcessedEventStore(
                     (EventosProcesadosTable.canal eq channel) and (EventosProcesadosTable.eventoExternoId eq externalEventId)
                 }) {
                     it[estado] = "FAILED"
+                    it[actualizadoEn] = Instant.now()
                 }
             }
         } catch (e: Exception) {

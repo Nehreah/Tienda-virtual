@@ -9,14 +9,23 @@ import io.ktor.server.response.*
 class DashboardGuard(
     val auth: DashboardAuth,
     val throttle: AuthThrottle,
-    val trustProxy: Boolean
+    val trustProxy: Boolean,
+    /** Cuántos proxies de confianza hay delante (TRUST_PROXY_HOPS). Con 1 se usa la última entrada de X-Forwarded-For. */
+    val trustProxyHops: Int = 1
 )
 
-/** IP del cliente. Solo con TRUST_PROXY=true se lee X-Forwarded-For (la última entrada la agrega NUESTRO proxy). */
-fun ApplicationCall.clientAddress(trustProxy: Boolean): String {
+/**
+ * IP del cliente. Solo con TRUST_PROXY=true se lee X-Forwarded-For. Cada proxy de confianza agrega UNA entrada al final,
+ * así que con [hops] proxies la IP real es la entrada número [hops] contando desde el final (las anteriores las puede
+ * falsear el cliente). Si la cabecera trae menos entradas de las esperadas, se usa la primera disponible.
+ */
+fun ApplicationCall.clientAddress(trustProxy: Boolean, hops: Int = 1): String {
     if (trustProxy) {
-        val forwarded = request.headers["X-Forwarded-For"]?.split(',')?.lastOrNull()?.trim()
-        if (!forwarded.isNullOrEmpty()) return forwarded
+        val entries = request.headers["X-Forwarded-For"]?.split(',')?.map { it.trim() }?.filter { it.isNotEmpty() }.orEmpty()
+        if (entries.isNotEmpty()) {
+            val index = (entries.size - hops.coerceAtLeast(1)).coerceAtLeast(0)
+            return entries[index]
+        }
     }
     return request.local.remoteHost
 }
@@ -40,7 +49,7 @@ fun ApplicationCall.isSameOriginRequest(trustProxy: Boolean): Boolean {
  * para rutas que modifican datos ([mutating] = true), 403 si el Origin no es el propio.
  */
 suspend fun ApplicationCall.requireDashboardAuth(guard: DashboardGuard, mutating: Boolean = false): Boolean {
-    val client = clientAddress(guard.trustProxy)
+    val client = clientAddress(guard.trustProxy, guard.trustProxyHops)
 
     val wait = guard.throttle.retryAfterSeconds(client)
     if (wait > 0) {
