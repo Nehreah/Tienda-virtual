@@ -126,8 +126,12 @@ class ExposedInventarioRepository : InventarioRepository {
             }
             jsonRes != null && jsonRes.contains("SUCCESS")
         } catch (e: Exception) {
+            // ANTES devolvía false, y el webhook lo leía como "venta rechazada por duplicado": con la base caída una venta
+            // real de Shopify se descartaba en silencio y quedaba marcada como procesada. Ahora el error SUBE: el
+            // webhook responde 500, marca el evento como FALLIDO y Shopify reintenta. "false" queda solo para el rechazo
+            // normal de la función SQL (duplicado, sin stock).
             logger.error("Error en vender_unidades SQL: ${e.message}", e)
-            false
+            throw e
         }
     }
 
@@ -146,8 +150,9 @@ class ExposedInventarioRepository : InventarioRepository {
                 }
                 jsonRes != null && jsonRes.contains("SUCCESS")
             } catch (e: Exception) {
+                // Igual que en venderUnidades: un fallo de base de datos no es "devolución rechazada"; debe reintentarse.
                 logger.error("Error en devolver_unidades SQL: ${e.message}", e)
-                false
+                throw e
             }
         }
 

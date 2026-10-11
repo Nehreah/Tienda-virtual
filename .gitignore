@@ -32,3 +32,6 @@ Thumbs.db
 scratch/
 tmp/
 *.xlsx
+
+# Excel: se ignoran (pueden traer costos reales) salvo la plantilla de ejemplo
+!docs/plantilla/*.xlsx

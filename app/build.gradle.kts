@@ -30,4 +30,7 @@ dependencies {
     implementation(libs.ktor.client.core)
     implementation(libs.ktor.client.cio)
     implementation(libs.logback.classic)
+
+    // Pruebas de rutas con testApplication (sin red ni base de datos).
+    testImplementation(libs.ktor.server.test.host)
 }

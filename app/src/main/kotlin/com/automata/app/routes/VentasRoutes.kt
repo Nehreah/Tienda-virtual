@@ -11,6 +11,9 @@ import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.IntegerColumnType
 import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.transactions.transaction
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger("VentasRoutes")
 
 fun Route.ventasRoutes(
     dashboardGuard: DashboardGuard
@@ -64,7 +67,7 @@ fun Route.ventasRoutes(
                 call.respond(HttpStatusCode.BadRequest, mapOf("status" to "error", "raw" to resultJson))
             }
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al registrar venta")))
+            call.respondError(logger, "registrar la venta", e)
         }
     }
 
@@ -93,7 +96,7 @@ fun Route.ventasRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al actualizar logística")))
+            call.respondError(logger, "actualizar la logística", e)
         }
     }
 
@@ -120,7 +123,7 @@ fun Route.ventasRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al asignar reparto")))
+            call.respondError(logger, "asignar el reparto", e)
         }
     }
 
@@ -144,7 +147,7 @@ fun Route.ventasRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al anular venta")))
+            call.respondError(logger, "anular la venta", e)
         }
     }
 
@@ -161,7 +164,7 @@ fun Route.ventasRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al reintentar outbox")))
+            call.respondError(logger, "reintentar el envío a los canales", e)
         }
     }
 
@@ -178,7 +181,7 @@ fun Route.ventasRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al resolver acción manual")))
+            call.respondError(logger, "resolver la acción manual", e)
         }
     }
 }

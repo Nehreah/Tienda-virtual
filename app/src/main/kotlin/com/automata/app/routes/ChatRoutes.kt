@@ -21,6 +21,9 @@ import org.jetbrains.exposed.sql.TextColumnType
 import org.jetbrains.exposed.sql.LongColumnType
 import org.jetbrains.exposed.sql.transactions.transaction
 import java.time.Instant
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger("ChatRoutes")
 
 fun Route.chatRoutes(
     dashboardGuard: DashboardGuard,
@@ -45,7 +48,7 @@ fun Route.chatRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al tomar conversación")))
+            call.respondError(logger, "tomar la conversación", e)
         }
     }
 
@@ -75,7 +78,7 @@ fun Route.chatRoutes(
             }
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "result" to res))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al devolver conversación")))
+            call.respondError(logger, "devolver la conversación al bot", e)
         }
     }
 
@@ -107,7 +110,7 @@ fun Route.chatRoutes(
             } ?: emptyList()
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "data" to items))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al cargar bandeja")))
+            call.respondError(logger, "cargar la bandeja", e)
         }
     }
 
@@ -139,7 +142,7 @@ fun Route.chatRoutes(
             } ?: emptyList()
             call.respond(HttpStatusCode.OK, mapOf("status" to "ok", "data" to items))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al cargar mensajes")))
+            call.respondError(logger, "cargar los mensajes", e)
         }
     }
 
@@ -262,6 +265,8 @@ fun Route.chatRoutes(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
+                    // Antes se ignoraba en silencio: si la base falla, el panel en vivo dejaba de actualizarse sin dejar rastro.
+                    logger.warn("Eventos en vivo del chat: no se pudo consultar la base (${e.message}); se reintenta en el siguiente ciclo.")
                     emptyList()
                 }
 

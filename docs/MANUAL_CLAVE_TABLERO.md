@@ -45,8 +45,32 @@ También puedes usar variables de entorno con los mismos nombres. **Si existen a
 
 ## 2. Entrar al tablero
 
-El navegador pide usuario y clave. Entra con `admin` (o el valor de `DASHBOARD_USER`) y tu clave.
-Usa siempre **HTTPS**: con HTTP la clave viaja legible.
+El navegador te lleva a un **formulario de ingreso** (`/login`). Entra con `admin` (o el valor de `DASHBOARD_USER`) y tu clave.
+Al entrar queda una **cookie de sesión** (HttpOnly, `SameSite=Strict`, y `Secure` en producción) que dura **8 horas**.
+El botón **Salir** (arriba a la derecha) cierra la sesión de verdad. Usa siempre **HTTPS**: con HTTP la clave viaja legible.
+
+`curl` y los scripts siguen funcionando con HTTP Basic (`-u usuario:clave`), igual que antes.
+
+### Usuario de solo lectura (opcional)
+
+Para un socio o el contador que solo necesita **mirar**, define un segundo usuario:
+
+```properties
+DASHBOARD_VIEWER_USER=socio
+DASHBOARD_VIEWER_PASSWORD=otra-clave-larga-de-12-o-mas
+```
+
+- Los dos van juntos (uno solo es un error de configuración), el usuario debe ser distinto del administrador y, en producción,
+  la clave también necesita 12 caracteres o más.
+- Ve todo el tablero y puede exportar el Excel, pero **cualquier acción que modifique datos responde 403**
+  ("Tu usuario es de solo lectura").
+
+### Sesiones: `SESSION_SECRET`
+
+- Sin `SESSION_SECRET`, la app genera un secreto al arrancar: **todas las sesiones se cierran cada vez que se reinicia**.
+- Con `SESSION_SECRET` fijo (`openssl rand -base64 32`) las sesiones sobreviven a un reinicio. **Cambiarlo cierra todas las
+  sesiones de golpe** (úsalo si sospechas que una cookie se filtró).
+- La cookie no contiene la clave: solo usuario, rol y vencimiento, con firma. Una cookie alterada se rechaza.
 
 Para subir o simular desde un navegador no hay que hacer nada especial. Si automatizas con `curl`, los `POST` deben llevar la
 cabecera `Origin` con el host de la app (defensa contra CSRF, tarea 1.4):
@@ -65,8 +89,8 @@ Los `GET` (por ejemplo `/api/excel/export`) no la necesitan.
 1. Genera otra con `openssl rand -base64 24`.
 2. Reemplaza el valor de `DASHBOARD_PASSWORD`.
 3. **Reinicia la app.** La clave se lee al arrancar, así que el cambio no aplica sin reinicio.
-4. **Cierra el navegador por completo** (HTTP Basic no tiene "cerrar sesión": el navegador recuerda la clave vieja hasta cerrarse)
-   y entra con la nueva. Entrar con la clave vieja cuenta como intento fallido (ver §5).
+4. Las sesiones abiertas **siguen valiendo hasta que vencen** (8 horas) o se reinicia la app sin `SESSION_SECRET`. Para cerrarlas
+   todas ya, cambia también `SESSION_SECRET`. Luego entra con la clave nueva; usar la vieja cuenta como intento fallido (ver §5).
 
 Cambia la clave cada 90 días y **de inmediato** si alguien que la conocía deja el equipo o si sospechas que se filtró.
 
@@ -82,11 +106,13 @@ No hay recuperación por correo. Entra al servidor, genera una clave nueva, edí
 
 - **En producción no arranca** si la clave falta o tiene menos de 12 caracteres (o si `DASHBOARD_USER` está vacío).
 - **En local sin clave solo escucha en `127.0.0.1`**, así que nadie de tu red puede abrir el tablero.
-- **Bloqueo por intentos fallidos:** 5 claves incorrectas en 5 minutos bloquean esa IP. Mientras dura el bloqueo la app responde
+- **Bloqueo por intentos fallidos** (formulario y HTTP Basic comparten el mismo contador): 5 claves incorrectas en 5 minutos bloquean esa IP. Mientras dura el bloqueo la app responde
   `429 Too Many Requests` con la cabecera `Retry-After`, **aunque la clave sea correcta**. La espera es de 1 minuto y se duplica
   cada vez que se repite (2, 4, 8... hasta un máximo de 1 hora). Si pasa más de 1 hora sin intentos, se olvida el historial.
   Abrir el tablero por primera vez (sin credenciales) **no** cuenta como intento fallido.
-- **Defensa CSRF:** los `POST` del tablero solo se aceptan si su `Origin` (o `Referer`) es el propio host, aunque lleven credenciales válidas.
+- **Defensa CSRF:** los `POST` del tablero (incluido el login y el cierre de sesión) solo se aceptan si su `Origin` (o `Referer`) es el propio host,
+  aunque lleven credenciales o cookie válidas; además la cookie es `SameSite=Strict`.
+- **Roles:** `ADMIN` hace todo; el usuario de lectura solo consulta.
 - **Comparación en tiempo constante** y la clave nunca se escribe en los registros.
 
 ### Si usas un proxy inverso (nginx, Caddy...)
@@ -96,4 +122,5 @@ No hay recuperación por correo. Entra al servidor, genera una clave nueva, edí
 - El proxy debe enviar la cabecera `Host` original (en nginx: `proxy_set_header Host $host;`) y, con `TRUST_PROXY=true`,
   `X-Forwarded-For` y `X-Forwarded-Host`. Si no, los `POST` del tablero se rechazan con 403.
 
-Mejora opcional para la fase 4: guardar `DASHBOARD_PASSWORD_HASH` (bcrypt o argon2) en lugar de la clave en texto plano.
+Pendiente opcional: guardar `DASHBOARD_PASSWORD_HASH` (bcrypt o argon2) en lugar de la clave en texto plano, y usuarios con
+nombre propio por persona en lugar de dos cuentas compartidas.

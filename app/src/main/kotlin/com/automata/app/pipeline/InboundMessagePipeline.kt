@@ -90,6 +90,10 @@ class InboundMessagePipeline(
 
     /**
      * Re-hidrata el mapa en memoria desde la BD al arrancar el servidor (H1).
+     *
+     * Si la lectura falla, el error se registra Y SE RELANZA: antes se tragaba y la app arrancaba con el mapa vacío,
+     * es decir, sin saber qué stock estaba reservado (riesgo de vender dos veces lo mismo). Quien arranca la app decide
+     * qué hacer: en producción no debe continuar.
      */
     suspend fun loadActiveReservations() {
         val repo = reservationRepo ?: return
@@ -100,6 +104,7 @@ class InboundMessagePipeline(
         } catch (e: Exception) {
             if (e is CancellationException) throw e
             logger.error("Error re-hidratando reservas desde BD al arrancar: ${e.message}", e)
+            throw e
         }
     }
 

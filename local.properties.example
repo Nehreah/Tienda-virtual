@@ -68,6 +68,11 @@ META_PAGE_ID=page_1234567890
 # Con APP_ENV=local y sin clave, el tablero solo escucha en 127.0.0.1.
 DASHBOARD_USER=admin
 DASHBOARD_PASSWORD=
+# Opcional: usuario de SOLO LECTURA (ve todo, no modifica nada). Definir los dos o ninguno.
+# DASHBOARD_VIEWER_USER=socio
+# DASHBOARD_VIEWER_PASSWORD=
+# Opcional: secreto de las sesiones del formulario de ingreso (openssl rand -base64 32).
+# SESSION_SECRET=
 
 # Opcionales (descomenta cuando publiques):
 # CORS_ALLOWED_HOST=tu-dominio.com -> sin esta variable CORS no se instala (solo mismo origen). El tablero NO necesita CORS.

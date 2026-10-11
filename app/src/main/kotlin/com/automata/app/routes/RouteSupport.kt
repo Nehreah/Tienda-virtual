@@ -4,7 +4,10 @@ import io.ktor.http.*
 import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
+import kotlinx.coroutines.CancellationException
+import org.slf4j.Logger
 import java.sql.SQLException
+import java.util.UUID
 
 /** Responde un fragmento HTML (para htmx). */
 suspend fun ApplicationCall.respondFragmento(html: String, status: HttpStatusCode = HttpStatusCode.OK) {
@@ -80,4 +83,44 @@ suspend fun ApplicationCall.receiveBytesLimited(max: Int): ByteArray? {
         out.write(buffer, 0, n)
     }
     return out.toByteArray()
+}
+
+/**
+ * Responde un error capturado en una ruta SIN filtrar detalles internos y sin perder la causa real.
+ *
+ * - Cancelación de la corrutina: se vuelve a lanzar (nunca se responde, es el cliente que cerró la conexión).
+ * - Dato inválido ([IllegalArgumentException]): 400 con el mensaje, que escribió el propio código y es para la persona.
+ * - Regla de negocio ([IllegalStateException]) o regla de la base (RAISE EXCEPTION de un trigger, SQLState P0001, o una
+ *   restricción de integridad, SQLState 23xxx): 409 con la primera línea del mensaje.
+ * - Cualquier otra cosa (caída de la base, error de programación): 500 con un mensaje genérico y un código corto.
+ *   El detalle completo con su traza queda en el registro bajo ese mismo código, para encontrarlo sin exponerlo al cliente.
+ *
+ * [contexto] completa la frase "No se pudo ...": por ejemplo "registrar la venta".
+ */
+suspend fun ApplicationCall.respondError(logger: Logger, contexto: String, e: Throwable) {
+    if (e is CancellationException) throw e
+
+    val sql = generateSequence<Throwable>(e) { it.cause?.takeIf { c -> c !== it } }
+        .filterIsInstance<SQLException>()
+        .firstOrNull()
+    val reglaDeLaBase = sql != null && (sql.sqlState == "P0001" || sql.sqlState?.startsWith("23") == true)
+
+    when {
+        e is IllegalArgumentException -> {
+            logger.warn("No se pudo $contexto (dato inválido): ${e.message}")
+            respond(HttpStatusCode.BadRequest, mapOf("error" to e.mensajeLegible()))
+        }
+        e is IllegalStateException || reglaDeLaBase -> {
+            logger.warn("No se pudo $contexto (regla de negocio): ${e.mensajeLegible()}")
+            respond(HttpStatusCode.Conflict, mapOf("error" to e.mensajeLegible()))
+        }
+        else -> {
+            val codigo = UUID.randomUUID().toString().take(8)
+            logger.error("No se pudo $contexto (código $codigo): ${e.message}", e)
+            respond(
+                HttpStatusCode.InternalServerError,
+                mapOf("error" to "No se pudo $contexto. Código de error: $codigo (consúltalo en los registros del servidor).")
+            )
+        }
+    }
 }

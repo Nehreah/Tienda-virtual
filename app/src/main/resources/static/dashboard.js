@@ -50,6 +50,8 @@
             target.textContent = 'Cargando…';
             fetch(config.url, { credentials: 'same-origin', headers: { 'X-Requested-With': 'fetch' } })
                 .then(function (response) {
+                    /* Sesión vencida: se vuelve al formulario de ingreso en vez de mostrar un error técnico. */
+                    if (response.status === 401) { window.location.href = '/login'; throw new Error('Tu sesión expiró. Ingresa de nuevo.'); }
                     /* Una respuesta de error en HTML (503 sin base de datos, 500 con el motivo) trae el mensaje para la persona: se muestra.
                        Cualquier otro error (401/403/429 en texto plano, red) sigue siendo el aviso genérico. */
                     var esHtml = (response.headers.get('Content-Type') || '').toLowerCase().indexOf('text/html') === 0;

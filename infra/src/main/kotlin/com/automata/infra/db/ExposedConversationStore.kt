@@ -34,11 +34,9 @@ class ExposedConversationStore : ConversationStore {
     }
 
     override fun save(conversation: Conversation): Unit = transaction {
-        val mensajesJson = try {
-            Json.encodeToString(ListSerializer(Message.serializer()), conversation.messages)
-        } catch (e: Exception) {
-            "[]"
-        }
+        // Antes, si la serialización fallaba se guardaba "[]" y se BORRABA el historial de la conversación sin avisar.
+        // Ahora el error sube y la transacción se revierte: es mejor no guardar que guardar vacío.
+        val mensajesJson = Json.encodeToString(ListSerializer(Message.serializer()), conversation.messages)
 
         // IMPORTANTE: Las columnas de control humano (atencion, atendido_por, atencion_desde,
         // requiere_atencion, ultimo_entrante_en) NUNCA se actualizan desde save().
@@ -150,7 +148,9 @@ class ExposedConversationStore : ConversationStore {
         val stateName = this[ConversacionesTable.state]
         val convState = try {
             ConversationState.valueOf(stateName)
-        } catch (e: Exception) {
+        } catch (e: IllegalArgumentException) {
+            // valueOf lanza IllegalArgumentException si el texto no es un estado conocido (dato viejo o dañado).
+            logger.warn("Estado de conversación desconocido '$stateName'; se trata como IDLE.")
             ConversationState.IDLE
         }
 

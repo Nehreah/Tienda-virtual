@@ -7,9 +7,11 @@ import com.automata.commerce.model.ReconciliationReport
 import com.automata.commerce.model.ReconciliationStatus
 import com.automata.commerce.ports.InventarioRepository
 import com.automata.commerce.ports.RemoteCatalogPort
+import kotlinx.coroutines.CancellationException
 import kotlinx.datetime.Clock
 import kotlinx.datetime.TimeZone
 import kotlinx.datetime.toLocalDateTime
+import org.slf4j.LoggerFactory
 
 /**
  * Caso de Uso de Reconciliación de Catálogo (Fase F2 + C3).
@@ -19,6 +21,7 @@ import kotlinx.datetime.toLocalDateTime
 class ReconcileCatalogUseCase(
     private val remotePorts: List<RemoteCatalogPort>
 ) {
+    private val logger = LoggerFactory.getLogger(ReconcileCatalogUseCase::class.java)
 
     suspend fun execute(
         localProducts: List<CommercialProduct>
@@ -26,15 +29,22 @@ class ReconcileCatalogUseCase(
         val now = Clock.System.now().toLocalDateTime(TimeZone.UTC).toString()
         val items = mutableListOf<ReconciliationItem>()
         val totalRemoteByChannel = mutableMapOf<String, Int>()
+        val failedChannels = mutableMapOf<String, String>()
 
         val activeLocalProducts = localProducts.filter { it.isActive }.associateBy { it.key.value }
 
         for (port in remotePorts) {
             val channel = port.channelName
+            // Si el canal no responde NO se trata como "canal vacío": eso haría aparecer todos los productos locales como
+            // "solo local" (falsos faltantes) y podría llevar a republicar todo el catálogo. Se omite el canal y se avisa.
             val remoteItems = try {
                 port.fetchRemoteProducts()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                emptyList()
+                logger.error("Reconciliación: no se pudo consultar el canal '$channel': ${e.message}", e)
+                failedChannels[channel] = e.message ?: e::class.simpleName ?: "error desconocido"
+                continue
             }
             totalRemoteByChannel[channel] = remoteItems.size
 
@@ -115,7 +125,8 @@ class ReconcileCatalogUseCase(
             mismatchCount = items.count { it.status == ReconciliationStatus.MISMATCH },
             localOnlyCount = items.count { it.status == ReconciliationStatus.LOCAL_ONLY },
             channelOnlyCount = items.count { it.status == ReconciliationStatus.CHANNEL_ONLY },
-            items = items
+            items = items,
+            failedChannels = failedChannels
         )
     }
 }

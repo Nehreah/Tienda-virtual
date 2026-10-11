@@ -1057,6 +1057,9 @@ object DashboardRenderer {
             <button type="button" class="btn icon-btn" id="theme-toggle" aria-label="Cambiar entre modo claro y oscuro" title="Cambiar entre modo claro y oscuro">
                 ${icon(ICON_SUN, "ic ic-sun")}${icon(ICON_MOON, "ic ic-moon")}
             </button>
+            <form method="post" action="/logout" style="display:inline;margin:0">
+                <button type="submit" class="btn" title="Cerrar sesión" aria-label="Cerrar sesión">Salir</button>
+            </form>
         </header>
 
         <main class="content">

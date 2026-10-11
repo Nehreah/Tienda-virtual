@@ -4,6 +4,7 @@ import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.ports.InventarioRepository
 import com.automata.shared.Money
 import com.automata.shared.ProductKey
+import org.slf4j.LoggerFactory
 import java.time.LocalDate
 
 data class ConfirmPaymentRequest(
@@ -35,6 +36,7 @@ data class ConfirmPaymentResult(
 class ConfirmPaymentUseCase(
     private val repo: InventarioRepository?
 ) {
+    private val logger = LoggerFactory.getLogger(ConfirmPaymentUseCase::class.java)
 
     fun execute(request: ConfirmPaymentRequest): ConfirmPaymentResult {
         require(request.dealId.isNotBlank()) { "El dealId no puede estar vacío" }
@@ -61,6 +63,8 @@ class ConfirmPaymentUseCase(
         } catch (e: IllegalStateException) {
             resolverReintento(request, e)
         } catch (e: Exception) {
+            // Un pago que no se pudo confirmar es lo más importante de dejar registrado: antes solo viajaba el texto al tablero.
+            logger.error("Falló la confirmación del pago ${request.dealId} (producto ${request.productKey.value}): ${e.message}", e)
             ConfirmPaymentResult(success = false, errorMessage = "Error en BD al confirmar pago: ${e.message}")
         }
     }
@@ -76,6 +80,7 @@ class ConfirmPaymentUseCase(
         val actual = try {
             repo?.findByKey(request.productKey)
         } catch (e: Exception) {
+            logger.warn("No se pudo releer ${request.productKey.value} para resolver el reintento del pago ${request.dealId}: ${e.message}")
             null
         }
 

@@ -16,6 +16,7 @@ import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.select
 import org.jetbrains.exposed.sql.update
 import org.jetbrains.exposed.sql.or
+import org.slf4j.LoggerFactory
 import java.time.Duration
 import java.time.Instant
 
@@ -25,7 +26,22 @@ class ExposedProcessedEventStore(
     private val staleAfter: Duration = Duration.ofMinutes(5)
 ) : ProcessedEventStore {
 
+    private val logger = LoggerFactory.getLogger(ExposedProcessedEventStore::class.java)
+
     @Volatile private var warned = false
+
+    /**
+     * La base falló y se usa la memoria del proceso. Se avisa con la traza completa la primera vez y en una línea
+     * después, para que la degradación quede visible: en memoria la idempotencia se pierde al reiniciar la app.
+     */
+    private fun avisarDegradacion(operacion: String, channel: String, externalEventId: String, e: Exception) {
+        if (!warned) {
+            warned = true
+            logger.error("Idempotencia en memoria: falló la base en $operacion ($channel/$externalEventId): ${e.message}", e)
+        } else {
+            logger.warn("Idempotencia en memoria: falló la base en $operacion ($channel/$externalEventId): ${e.message}")
+        }
+    }
 
     override fun tryStartProcessing(channel: String, externalEventId: String): Boolean {
         return try {
@@ -66,6 +82,7 @@ class ExposedProcessedEventStore(
         } catch (e: ExposedSQLException) {
             if (isDuplicate(e)) false else fallback.tryStartProcessing(channel, externalEventId)
         } catch (e: Exception) {
+            avisarDegradacion("tryStartProcessing", channel, externalEventId, e)
             fallback.tryStartProcessing(channel, externalEventId)
         }
     }
@@ -81,6 +98,7 @@ class ExposedProcessedEventStore(
                 }
             }
         } catch (e: Exception) {
+            avisarDegradacion("markDone", channel, externalEventId, e)
             fallback.markDone(channel, externalEventId)
         }
     }
@@ -96,6 +114,7 @@ class ExposedProcessedEventStore(
                 }
             }
         } catch (e: Exception) {
+            avisarDegradacion("markFailed", channel, externalEventId, e)
             fallback.markFailed(channel, externalEventId, errorMessage)
         }
     }

@@ -15,6 +15,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # La versión de Java debe coincidir con "javaVersion" en build.gradle.kts y con el Dockerfile.
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:

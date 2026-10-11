@@ -29,6 +29,16 @@ gen_secret() {
     printf '%s' "$value"
 }
 
+# La app compila y corre con Java 21 (misma versión que Docker y CI).
+JAVA_MAJOR=""
+if command -v java >/dev/null 2>&1; then
+    JAVA_MAJOR="$(java -version 2>&1 | head -n 1 | sed -E 's/.*version "([0-9]+).*/\1/')"
+fi
+if [ -z "$JAVA_MAJOR" ] || [ "$JAVA_MAJOR" -lt 21 ] 2>/dev/null; then
+    echo -e "${YELLOW}[!] Se necesita Java 21 o superior (detectado: ${JAVA_MAJOR:-ninguno}). Instala JDK 21 (por ejemplo Temurin) y vuelve a intentar.${RESET}" >&2
+    exit 1
+fi
+
 if [ ! -f "local.properties" ]; then
     # Ya NO se copia local.properties.example (traía valores de ejemplo conocidos por cualquiera).
     # Se genera un archivo nuevo con claves aleatorias; las integraciones quedan vacías hasta que las completes.

@@ -14,6 +14,9 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+import org.slf4j.LoggerFactory
+
+private val logger = LoggerFactory.getLogger("ArticulosRoutes")
 
 /** Espejo en memoria (AppStore) de un artículo de la base; lo usan el catálogo del dashboard y los canales. */
 internal fun InventarioItem.toCommercialProduct(): CommercialProduct = CommercialProduct(
@@ -105,7 +108,7 @@ fun Route.articulosRoutes(
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Ya existe el producto")))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al crear producto")))
+            call.respondError(logger, "crear el producto", e)
         }
     }
 
@@ -184,7 +187,7 @@ fun Route.articulosRoutes(
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to (e.message ?: "Producto no encontrado")))
         } catch (e: Exception) {
-            call.respond(HttpStatusCode.InternalServerError, mapOf("error" to (e.message ?: "Error al editar producto")))
+            call.respondError(logger, "editar el producto", e)
         }
     }
     post("/api/articulos/{key}/archivar") {

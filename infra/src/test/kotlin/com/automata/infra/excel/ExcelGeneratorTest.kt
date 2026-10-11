@@ -46,7 +46,7 @@ class ExcelGeneratorTest {
     }
 
     @Test
-    fun `actualiza el archivo NEGOCIO xlsx en la raiz del proyecto con las 18 columnas`() {
+    fun `genera un xlsx con las 18 columnas sin tocar archivos del proyecto`() {
         val sampleItems = listOf(
             InventarioItem(
                 key = ProductKey("PROD-001"),
@@ -82,7 +82,8 @@ class ExcelGeneratorTest {
             )
         )
 
-        val targetFile = java.io.File("NEGOCIO.xlsx")
+        // Antes escribía NEGOCIO.xlsx en el directorio del proyecto en cada ejecución de las pruebas (ensuciaba git).
+        val targetFile = java.io.File.createTempFile("NEGOCIO-test", ".xlsx").also { it.deleteOnExit() }
         targetFile.outputStream().use { os ->
             ExcelGenerator.generateWorkbookFromItems(sampleItems, os)
         }

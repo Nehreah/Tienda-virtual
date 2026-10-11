@@ -37,5 +37,11 @@ data class ReconciliationReport(
     val mismatchCount: Int,
     val localOnlyCount: Int,
     val channelOnlyCount: Int,
-    val items: List<ReconciliationItem>
+    val items: List<ReconciliationItem>,
+    /**
+     * Canales que NO se pudieron consultar (canal -> motivo). Esos canales no aparecen en [items] ni en
+     * [totalRemoteByChannel]: no se comparó nada, así que ninguna fila "solo local" viene de ellos.
+     * Si esta lista no está vacía, el informe está incompleto.
+     */
+    val failedChannels: Map<String, String> = emptyMap()
 )

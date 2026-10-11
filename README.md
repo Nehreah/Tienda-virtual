@@ -20,8 +20,13 @@ El catálogo se carga subiendo un archivo `.xlsx`. Desde ese momento, el sistema
 start.bat
 ```
 
-El script crea `local.properties` a partir de la plantilla si no existe, compila y levanta el servidor:
+El script crea `local.properties` si no existe, compila y levanta el servidor:
 👉 **http://localhost:8080**
+
+**Requisitos:** JDK **21** (la misma versión que usan el `Dockerfile` y el CI; se define en `build.gradle.kts` como `javaVersion`).
+
+**Despliegue:** la aplicación está pensada para **una sola instancia**. Los candados de reservas y el caché del catálogo viven
+en la memoria del proceso, así que no ejecutes dos copias a la vez contra la misma base de datos.
 
 ---
 
@@ -173,7 +178,10 @@ La suite cubre: motor de negociación L0-L4, aislamiento financiero (fuga de PM/
 | Archivo | Descripción |
 |---|---|
 | `local.properties.example` | Plantilla de configuración (copia y edita) |
-| `NEGOCIO.xlsx` | Plantilla de Matriz Comercial (sube desde el dashboard) |
+| `docs/plantilla/NEGOCIO.xlsx` | Plantilla de Matriz Comercial (sube desde el dashboard) |
+| `CHANGELOG.md` | Historial de cambios por versión |
+| `docs/DIAGRAMA_DE_CLASES.md` | Diagrama de clases vigente |
+| `docs/historico/` | Planes y evaluaciones anteriores |
 | `MANUAL_DE_USO.md` | Manual operativo paso a paso |
 | `LICENSE` | Licencia de código privado |
 
@@ -188,12 +196,6 @@ La suite cubre: motor de negociación L0-L4, aislamiento financiero (fuga de PM/
 
 El dashboard utiliza la versión oficial de htmx (`htmx.min.js` v1.9.10) alojada localmente, con configuración estricta vía `<meta name="htmx-config">` (`allowEval:false`, `allowScriptTags:false`, `selfRequestsOnly:true`) cumpliendo la directiva CSP (`script-src 'self'`).
 
-## Registro de cambios y tareas pendientes
+## Registro de cambios
 
-- `MANUAL_DE_CAMBIOS_v9.md`: cambios de esta entrega, limitaciones, pruebas pendientes y próximos pasos.
-- `MANUAL_DE_CAMBIOS_v8.md`: primera entrega de módulos de socios y reparaciones.
-
-
-## Registro de cambios reciente
-
-La entrega de octubre de 2026 documenta los cambios de la matriz de inversión y las validaciones en `MANUAL_DE_CAMBIOS_v10.md`. Consulta también `MANUAL_DE_CAMBIOS_v9.md`.
+Ver [`CHANGELOG.md`](CHANGELOG.md).

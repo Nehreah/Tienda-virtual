@@ -8,11 +8,15 @@ allprojects {
     version = "5.3.0"
 }
 
+// Única fuente de verdad de la versión de Java. Debe coincidir con el Dockerfile (eclipse-temurin:21)
+// y con .github/workflows/ci.yml (java-version: 21). Si la cambias, cambia también esos dos archivos.
+val javaVersion = 21
+
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")
 
     configure<org.jetbrains.kotlin.gradle.dsl.KotlinJvmProjectExtension> {
-        jvmToolchain(17)
+        jvmToolchain(javaVersion)
     }
 
     val libsCatalog = rootProject.extensions.getByType<org.gradle.api.artifacts.VersionCatalogsExtension>().named("libs")

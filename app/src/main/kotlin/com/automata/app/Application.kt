@@ -202,11 +202,41 @@ object AppStoreCatalog : PipelineCatalog {
 
 private var cachedSecurityPlan: DashboardSecurity.Plan? = null
 
+/**
+ * Crea un componente que depende de la base de datos.
+ * - En PRODUCCIÓN, si falla la app NO sigue: lanza la excepción y el arranque se detiene con un error claro. Antes se
+ *   registraba y se seguía con `null`, y la app quedaba "arriba" pero guardando pagos y reservas solo en memoria.
+ * - En LOCAL se registra y se devuelve null (modo solo memoria, útil para desarrollar sin base).
+ */
+private fun <T> crearOContinuar(nombre: String, crear: () -> T): T? = try {
+    crear()
+} catch (e: Exception) {
+    if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+        logger.error("ERROR CRÍTICO: no se pudo crear $nombre en producción: ${e.message}", e)
+        throw IllegalStateException("No se pudo crear $nombre; en APP_ENV=production la app no puede seguir sin él.", e)
+    }
+    logger.error("No se pudo crear $nombre: ${e.message}. Modo local: se continúa sin él.", e)
+    null
+}
+
 fun main() {
     val securityPlan = try {
-        DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword).also {
-            cachedSecurityPlan = it
+        val base = DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword)
+        // Usuario opcional de solo lectura (socios, contador): ve todo, no modifica nada.
+        val viewer = DashboardSecurity.viewerCredentials(
+            AppConfig.appEnv,
+            AppConfig.dashboardUser,
+            AppConfig.get("DASHBOARD_VIEWER_USER"),
+            AppConfig.get("DASHBOARD_VIEWER_PASSWORD")
+        )
+        val plan = when {
+            viewer == null -> base
+            !base.auth.enabled -> base.copy(
+                warnings = base.warnings + "DASHBOARD_VIEWER_* se ignora: sin DASHBOARD_PASSWORD el tablero no pide clave."
+            )
+            else -> base.copy(auth = base.auth.withViewer(viewer.first, viewer.second))
         }
+        plan.also { cachedSecurityPlan = it }
     } catch (e: IllegalStateException) {
         logger.error("ERROR DE CONFIGURACIÓN: la aplicación no arrancará.")
         logger.error("  ${e.message}")
@@ -263,7 +293,12 @@ fun main() {
             }
             logger.info("  AppStore cargado desde BD: ${items.size} producto(s).")
         } catch (e: Exception) {
-            logger.error("Error cargando catálogo desde BD al arrancar: ${e.message}. Continuando con AppStore vacío.", e)
+            // Un catálogo vacío en producción es peligroso: los canales podrían recibir stock 0 de todo el inventario.
+            if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+                logger.error("ERROR CRÍTICO: no se pudo cargar el catálogo desde la BD en producción: ${e.message}. Deteniendo servidor.", e)
+                exitProcess(1)
+            }
+            logger.error("Error cargando catálogo desde BD al arrancar: ${e.message}. Continuando con AppStore vacío (modo local).", e)
         }
     }
     var initialPort = AppConfig.port
@@ -327,12 +362,8 @@ fun Application.module() {
 
     val negotiationEngine = NegotiationEngine()
 
-    val dbRepository: InventarioRepository? = if (AppStore.databaseConnected) {
-        try { ExposedInventarioRepository() } catch (e: Exception) {
-            logger.error("No se pudo crear ExposedInventarioRepository: ${e.message}", e)
-            null
-        }
-    } else null
+    val dbRepository: InventarioRepository? =
+        if (AppStore.databaseConnected) crearOContinuar("ExposedInventarioRepository") { ExposedInventarioRepository() } else null
 
     val outboxPublisher = if (AppStore.databaseConnected) com.automata.infra.db.OutboxEventPublisher() else null
     val articuloService: ArticuloLifecycleService? = dbRepository?.let { repo ->
@@ -394,11 +425,28 @@ fun Application.module() {
 
     val securityPlan = cachedSecurityPlan ?: DashboardSecurity.plan(AppConfig.appEnv, AppConfig.dashboardUser, AppConfig.dashboardPassword)
 
+    // Sesiones por cookie firmada para el formulario /login. HTTP Basic sigue valiendo para curl y scripts.
+    val sessionSecret = AppConfig.get("SESSION_SECRET")
+    val sessionManager: SessionManager? = when {
+        !securityPlan.auth.enabled -> null
+        sessionSecret.isNotBlank() -> {
+            if (sessionSecret.length < 32) logger.warn("AVISO: SESSION_SECRET tiene menos de 32 caracteres; usa uno más largo (openssl rand -base64 32).")
+            SessionManager.fromSecret(sessionSecret)
+        }
+        else -> {
+            logger.info("  SESSION_SECRET no definido: las sesiones del tablero se cierran cada vez que se reinicia la app.")
+            SessionManager()
+        }
+    }
+    if (securityPlan.auth.hasViewer) logger.info("  Usuario de solo lectura activo (DASHBOARD_VIEWER_USER).")
+
     val dashboardGuard = DashboardGuard(
         auth = securityPlan.auth,
         throttle = AuthThrottle(),
         trustProxy = AppConfig.trustProxyHeaders,
-        trustProxyHops = AppConfig.trustProxyHops
+        trustProxyHops = AppConfig.trustProxyHops,
+        sessions = sessionManager,
+        secureCookies = AppConfig.appEnv == AppEnv.PRODUCTION
     )
     if (!AppConfig.trustProxyHeaders && AppConfig.appEnv == AppEnv.PRODUCTION) {
         logger.warn(
@@ -416,12 +464,8 @@ fun Application.module() {
         }
     }
 
-    val reservationRepo = if (AppStore.databaseConnected) {
-        try { ExposedReservationRepository() } catch (e: Exception) {
-            logger.error("No se pudo crear ExposedReservationRepository: ${e.message}", e)
-            null
-        }
-    } else null
+    val reservationRepo =
+        if (AppStore.databaseConnected) crearOContinuar("ExposedReservationRepository") { ExposedReservationRepository() } else null
 
     val conversationStore = if (AppStore.databaseConnected) ExposedConversationStore() else InMemoryConversationStore()
 
@@ -439,7 +483,10 @@ fun Application.module() {
         try {
             runBlocking { inboundPipeline.loadActiveReservations() }
         } catch (e: Exception) {
-            logger.error("Error recuperando reservas activas de la BD: ${e.message}", e)
+            if (AppConfig.appEnv == AppEnv.PRODUCTION) {
+                throw IllegalStateException("No se pudieron recuperar las reservas activas; en APP_ENV=production la app no arranca sin ellas.", e)
+            }
+            logger.error("Error recuperando reservas activas de la BD: ${e.message}. Modo local: se continúa sin ellas.", e)
         }
     }
 
@@ -485,12 +532,8 @@ fun Application.module() {
         importacionesRepo = importacionesRepo
     )
 
-    val reparacionRepo = if (AppStore.databaseConnected) {
-        try { ExposedReparacionRepository() } catch (e: Exception) {
-            logger.error("No se pudo crear ExposedReparacionRepository: ${e.message}", e)
-            null
-        }
-    } else null
+    val reparacionRepo =
+        if (AppStore.databaseConnected) crearOContinuar("ExposedReparacionRepository") { ExposedReparacionRepository() } else null
 
     val socioRepo: SocioRepository = if (AppStore.databaseConnected) ExposedSocioRepository() else InMemorySocioRepository()
     val inversionRepo: InversionRepository = if (AppStore.databaseConnected) ExposedInversionRepository() else InMemoryInversionRepository()
@@ -501,6 +544,7 @@ fun Application.module() {
 
     routing {
         staticResources("/static", "static")
+        loginRoutes(dashboardGuard)
         dashboardRoutes(dashboardGuard, llmAdapter, negotiationEngine)
         excelRoutes(dashboardGuard, dbRepository, importacionesRepo, excelPreviewService, excelParser)
         articulosRoutes(dashboardGuard, articuloService, reservationRepo)
