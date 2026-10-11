@@ -118,7 +118,24 @@ class NegotiationEngine(
         }
 
         // Cualquier oferta por debajo del umbral de aceptación (sea < PM o < L2) recibe la contraoferta del paso
-        return counterOffer(product, previousCounterOffers, customerId)
+        val counter = counterOffer(product, previousCounterOffers, customerId)
+
+        // Nunca contraofertar POR DEBAJO de lo que el cliente ya ofreció (v14): en los pasos avanzados (15 % de
+        // descuento, o el jitter de ±3 % en el paso 1) la contraoferta puede quedar más barata que la oferta del
+        // cliente. Como la contraoferta ya es >= PM (la fija calculateDiscountPrice/applyJitter), si el cliente
+        // ofreció igual o más, se acepta su oferta en vez de regalarle margen. La comprobación contra PM es
+        // redundante a propósito: el invariante "nunca aceptar bajo el PM" no debe depender de otra función.
+        val counterPrice = counter.counterOffer
+        if (counterPrice != null && offeredAmount >= counterPrice && offeredAmount >= pm) {
+            return NegotiationDecision(
+                accepted     = true,
+                level        = NegotiationLevel.L2_MODERATE_DISCOUNT,
+                agreedPrice  = offeredAmount,
+                counterOffer = null,
+                message = "Aceptamos tu oferta especial de ${offeredAmount.formatFormattedCop()} por hoy."
+            )
+        }
+        return counter
     }
 
     private fun counterOffer(product: CommercialProduct, previousCounterOffers: Int, customerId: String): NegotiationDecision {
