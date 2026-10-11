@@ -10,6 +10,9 @@ import com.automata.shared.ProductKey
 interface ReparacionRepository {
     fun find(key: ProductKey): Reparacion?
 
+    /** Todas las filas de reparaciones en una sola consulta (evita una consulta por artículo en el panel). */
+    fun findAll(): List<Reparacion>
+
     /**
      * Crea o actualiza. Si el artículo aún no tenía requiere_reparacion = true, lo marca (la base crea la fila).
      * Lanza IllegalArgumentException si la Key no existe en Inventario.

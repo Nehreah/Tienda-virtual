@@ -324,8 +324,11 @@ fun Application.module() {
 
     val negotiationEngine = NegotiationEngine()
 
-    val dbRepository: InventarioRepository? = if (AppConfig.databaseConfigured) {
-        try { ExposedInventarioRepository() } catch (e: Exception) { null }
+    val dbRepository: InventarioRepository? = if (AppStore.databaseConnected) {
+        try { ExposedInventarioRepository() } catch (e: Exception) {
+            logger.error("No se pudo crear ExposedInventarioRepository: ${e.message}", e)
+            null
+        }
     } else null
 
     val outboxPublisher = if (AppStore.databaseConnected) com.automata.infra.db.OutboxEventPublisher() else null

@@ -7,6 +7,7 @@ import com.automata.shared.ProductKey
 import org.jetbrains.exposed.sql.and
 import org.jetbrains.exposed.sql.insert
 import org.jetbrains.exposed.sql.select
+import org.jetbrains.exposed.sql.selectAll
 import org.jetbrains.exposed.sql.transactions.transaction
 import org.jetbrains.exposed.sql.update
 
@@ -16,6 +17,16 @@ class ExposedReparacionRepository : ReparacionRepository {
         ReparacionesTable.select { ReparacionesTable.key eq key.value }.singleOrNull()?.let {
             Reparacion(
                 key = key,
+                precioReparacion = Money.of(it[ReparacionesTable.precioReparacion]),
+                detalles = it[ReparacionesTable.detalles]
+            )
+        }
+    }
+
+    override fun findAll(): List<Reparacion> = transaction {
+        ReparacionesTable.selectAll().map {
+            Reparacion(
+                key = ProductKey(it[ReparacionesTable.key]),
                 precioReparacion = Money.of(it[ReparacionesTable.precioReparacion]),
                 detalles = it[ReparacionesTable.detalles]
             )
