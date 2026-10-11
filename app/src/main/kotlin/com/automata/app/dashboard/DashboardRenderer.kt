@@ -280,7 +280,8 @@ object DashboardRenderer {
     <meta name="csrf-token" content="${escapeHtml(csrfToken)}">
     <title>Tienda Virtual Multicanal · Commerce Control</title>
     <script src="/static/theme-init.js" defer></script>
-    <script src="/static/htmx-lite.js" defer></script>
+    <meta name="htmx-config" content='{"allowEval":false,"allowScriptTags":false,"selfRequestsOnly":true,"historyEnabled":false,"includeIndicatorStyles":false}'>
+    <script src="/static/htmx.min.js" defer></script>
     <style>
         /* ================= Tokens ================= */
         :root {
@@ -424,6 +425,54 @@ object DashboardRenderer {
         .inventory-action-button { padding:7px 9px; border:1px solid var(--border); border-radius:7px; color:var(--primary); background:var(--surface); font-size:.78rem; font-weight:650; white-space:nowrap; }
         .inventory-action-button:hover { border-color:var(--primary); }
         .inventory-table tbody tr:hover { background:var(--surface-soft, var(--surface)); }
+
+        /* ================= Módulos v11: catálogo, socios y liquidaciones ================= */
+        .ui-stack { display:flex; flex-direction:column; gap:16px; }
+        .ui-toolbar { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:10px; margin-bottom:14px; }
+        .ui-toolbar-group { display:flex; flex-wrap:wrap; align-items:center; gap:8px; }
+        .ui-card { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:18px; }
+        .ui-card h3 { margin:0 0 4px; font-size:1rem; font-weight:700; }
+        .ui-hint { color:var(--muted); font-size:.82rem; margin:0 0 10px; }
+        .ui-ok { padding:12px; border-radius:8px; background:#e8f8ef; color:#14633a; margin-bottom:12px; }
+        .ui-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:12px; }
+        .ui-field { display:flex; flex-direction:column; gap:5px; min-width:0; }
+        .ui-field.wide { grid-column:1 / -1; }
+        .ui-field label { font-size:.78rem; font-weight:600; color:var(--text-2); }
+        .ui-field input, .ui-field select, .ui-field textarea {
+            width:100%; padding:9px 11px; border-radius:9px; border:1px solid var(--border);
+            background:var(--bg); color:var(--text); font:inherit; font-size:.9rem;
+        }
+        .ui-field textarea { min-height:70px; resize:vertical; }
+        .ui-field input:focus, .ui-field select:focus, .ui-field textarea:focus { outline:2px solid var(--primary); outline-offset:1px; }
+        .ui-field input[readonly] { opacity:.7; }
+        .ui-field small { color:var(--muted); font-size:.74rem; }
+        .ui-actions { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+        .ui-actions.end { justify-content:flex-end; margin-top:14px; }
+        .ui-link-btn { padding:6px 10px; border:1px solid var(--border); border-radius:8px; background:transparent; color:var(--text); font:inherit; font-size:.78rem; cursor:pointer; }
+        .ui-link-btn:hover { border-color:var(--primary); }
+        .ui-link-btn.danger { color:#e5484d; }
+        .ui-link-btn.danger:hover { border-color:#e5484d; }
+        .btn-danger { border-color:transparent; color:#fff; background:#d33a3f; }
+        .btn-danger:hover { filter:brightness(1.08); border-color:transparent; }
+        .ui-muted { color:var(--muted); }
+        .ui-mono { font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .ui-num { text-align:right !important; white-space:nowrap; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; }
+        .ui-neg { color:#e5484d; }
+        .ui-small { font-size:.78rem; }
+        .ui-sub { display:block; color:var(--muted); font-size:.74rem; margin-top:2px; }
+        .ui-state { display:inline-block; padding:4px 8px; border-radius:999px; font-size:.72rem; font-weight:700; background:var(--surface-2); color:var(--text-2); }
+        .ui-state.ok { background:#dcfce7; color:#166534; }
+        .ui-state.warn { background:#fef3c7; color:#92400e; }
+        .ui-state.bad { background:#fee2e2; color:#991b1b; }
+        .ui-details > summary { cursor:pointer; list-style:none; }
+        .ui-details > summary::-webkit-details-marker { display:none; }
+        .ui-modal-backdrop { position:fixed; inset:0; z-index:90; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(3,6,18,.62); }
+        .ui-modal { width:100%; max-width:460px; max-height:90vh; overflow:auto; background:var(--surface); color:var(--text); border:1px solid var(--border); border-radius:14px; padding:20px; box-shadow:0 20px 60px rgba(0,0,0,.45); }
+        .ui-modal h3 { margin:0 0 6px; font-size:1.05rem; }
+        .ui-notice { padding:12px; border-radius:8px; background:#fef3c7; color:#7c4a03; font-size:.82rem; margin:10px 0; }
+        .ui-notice p { margin:0 0 4px; }
+        .ui-toast { position:fixed; right:16px; bottom:16px; z-index:9999; max-width:32rem; padding:12px 16px; border-radius:12px; background:#7f1d1d; color:#fff; box-shadow:0 8px 30px rgba(0,0,0,.35); }
+        .ui-row-off td { opacity:.6; }
         .repair-form { display:flex; gap:8px; min-width:360px; }
         .repair-form input { min-width:90px; width:140px; padding:8px; border:1px solid var(--border); border-radius:7px; background:var(--surface); color:var(--text); }
         .repair-form input[name="detalles"] { flex:1; width:auto; }
@@ -1220,6 +1269,9 @@ object DashboardRenderer {
                     </div>
                 </div>
                 <div id="reconcile-results" aria-live="polite"></div>
+                <div class="card module-panel">
+                    <div id="catalogo-panel" class="module-loading" aria-live="polite">Cargando artículos…</div>
+                </div>
                 <div class="card module-panel">
                     <div class="module-heading"><h3>Distribución de inversión por artículo</h3><p>Los porcentajes determinan cómo se reparte el resultado entre los socios. Los artículos vendidos quedan bloqueados por las reglas de negocio.</p></div>
                     <div id="inventario-inversion-panel" class="module-loading" aria-live="polite">Cargando matriz de inversión…</div>

@@ -175,6 +175,9 @@ class ExcelV2Parser {
             val excelRow = rowNumbers.getValue(keyStr)
             val rowErrors = mutableListOf<String>()
 
+            // Política de claves (v11): una clave nueva no puede romper las rutas ni la restricción de la base.
+            ProductKey.validar(keyStr)?.let { rowErrors.add(cellError(excelRow, "Key", it)) }
+
             val itemName = data["item name"] ?: data["item"] ?: keyStr
 
             // Montos: nunca se convierten en 0 por error. Se revisan los tres para informar todos los problemas de la fila de una vez.

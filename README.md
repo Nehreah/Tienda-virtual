@@ -186,7 +186,7 @@ La suite cubre: motor de negociación L0-L4, aislamiento financiero (fuga de PM/
 
 ## Nota de mantenimiento pendiente
 
-Antes de producción, lee `PENDIENTE_CAMBIAR_HTMX_OFICIAL.md`: `htmx-lite.js` es temporal y debe sustituirse por la biblioteca oficial htmx local, con pruebas de todos los formularios y eventos.
+Antes de producción, lee `PENDIENTE_CAMBIAR_HTMX_OFICIAL.md`: el dashboard ya usa htmx oficial local (`htmx.min.js`), pero falta compilar y probarlo en el navegador con `APP_ENV=production`.
 
 ## Registro de cambios y tareas pendientes
 

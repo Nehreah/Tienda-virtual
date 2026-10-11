@@ -69,7 +69,11 @@ fun Route.inversionRoutes(
 
         post("/{key}/inversion/repartir-igual") {
             if (!call.requireDashboardAuth(dashboardGuard, mutating = true)) return@post
-            val keyStr = call.parameters["key"] ?: ""
+            val keyStr = call.parameters["key"]?.trim().orEmpty()
+            if (keyStr.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, "Key de artículo requerida")
+                return@post
+            }
             val key = ProductKey(keyStr)
             val socios = socioRepo.listar(incluirArchivados = false)
             val sociosIds = socios.map { it.id }

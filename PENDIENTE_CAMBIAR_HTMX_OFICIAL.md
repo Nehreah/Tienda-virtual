@@ -1,14 +1,16 @@
-# Pendiente para revisar después: reemplazar htmx-lite por htmx oficial
+# Pendiente: probar htmx oficial en el navegador (v11)
 
-**No olvidar:** antes de dar por terminada la Fase 2 o desplegar en producción, sustituir `app/src/main/resources/static/htmx-lite.js` por la biblioteca oficial htmx, descargada desde una fuente oficial y fijada a una versión concreta.
+**Estado:** `htmx-lite.js` ya fue retirado. El dashboard carga `/static/htmx.min.js` (htmx 1.9.10, archivo local ya presente en
+`app/src/main/resources/static/`) con la configuración de la etiqueta `<meta name="htmx-config">`:
+`allowEval:false`, `allowScriptTags:false`, `selfRequestsOnly:true`, `historyEnabled:false`, `includeIndicatorStyles:false`.
 
-## Pasos
-1. Consultar la documentación oficial y elegir una versión estable compatible con el proyecto.
-2. Descargar y guardar el archivo de distribución en `app/src/main/resources/static/` (no depender de un CDN en tiempo de ejecución).
-3. Actualizar `DashboardRenderer.kt` para cargar el archivo oficial local y retirar `htmx-lite.js`.
-4. Verificar compatibilidad de `hx-get`, `hx-post`, `hx-put`, `hx-delete`, `hx-target`, `hx-swap`, formularios y eventos.
-5. Comprobar que la CSP `script-src 'self'` sigue funcionando sin `unsafe-inline` para scripts.
-6. Ejecutar `./gradlew check test` y probar en navegador con `APP_ENV=production`; revisar consola y pestaña Network.
-7. Eliminar este recordatorio solo después de confirmar las pruebas.
+**No se ha probado en un navegador ni compilado.** Antes de producción:
 
-**Importante:** `htmx-lite.js` es una implementación local limitada, no la biblioteca oficial ni un reemplazo completo de htmx.
+1. Verificar la integridad del archivo contra la fuente oficial (npm `htmx.org@1.9.10`, `dist/htmx.min.js`; no se pudo comprobar sin red):
+   `sha256sum app/src/main/resources/static/htmx.min.js` → `b3bdcf5c741897a53648b1207fff0469a0d61901429ba1f6e88f98ebd84e669e`
+2. Ejecutar `./gradlew check test` y arrancar con `APP_ENV=production` (CSP `script-src 'self'`); abrir la consola y la pestaña Network.
+3. Probar: abrir cada subpágina (Socios, Reparaciones, Inventario), crear/editar/archivar/restaurar/eliminar un artículo, agregar y retirar un
+   socio, registrar y anular una liquidación, cambiar un % de inversión, "Partes Iguales", "Reconciliar Canales", métricas y simulador de chat.
+4. Comprobar que los errores de validación (HTTP 400/409 en HTML) aparecen dentro del panel y que 401/403/429/errores de red muestran el aviso.
+5. Revisar que no queden `onclick=`/`<script>` en línea: `VentasRenderer.kt` y `ChatRenderer.kt` aún los tienen (la CSP los bloquea).
+6. Borrar este archivo solo cuando todo lo anterior pase.

@@ -3,7 +3,10 @@ package com.automata.app.routes
 import com.automata.app.AppStore
 import com.automata.app.dashboard.DashboardGuard
 import com.automata.app.dashboard.requireDashboardAuth
+import com.automata.commerce.model.CommercialProduct
+import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.ports.ReservationRepository
+import com.automata.shared.Money
 import com.automata.commerce.service.ArticuloLifecycleService
 import com.automata.shared.ProductKey
 import io.ktor.http.*
@@ -11,6 +14,41 @@ import io.ktor.server.application.*
 import io.ktor.server.request.*
 import io.ktor.server.response.*
 import io.ktor.server.routing.*
+
+/** Espejo en memoria (AppStore) de un artículo de la base; lo usan el catálogo del dashboard y los canales. */
+internal fun InventarioItem.toCommercialProduct(): CommercialProduct = CommercialProduct(
+    key = key,
+    itemName = item,
+    publishedPrice = precioPublicado ?: Money.of(0),
+    minimumPrice = precioMinimo ?: Money.of(0),
+    cost = precioCompra,
+    status = estado.etiqueta,
+    description = descripcion ?: "",
+    brand = marca ?: "",
+    condition = condicion ?: "",
+    category = tipo ?: "",
+    location = ubicacion,
+    masterQuantity = cantidad
+)
+
+internal fun sincronizarProductoEnMemoria(item: InventarioItem) {
+    synchronized(AppStore.products) { AppStore.products[item.key.value] = item.toCommercialProduct() }
+}
+
+internal fun marcarEstadoEnMemoria(key: ProductKey, etiqueta: String) {
+    synchronized(AppStore.products) {
+        AppStore.products[key.value]?.let { AppStore.products[key.value] = it.copy(status = etiqueta) }
+    }
+}
+
+internal fun quitarDeMemoria(key: ProductKey) {
+    synchronized(AppStore.products) { AppStore.products.remove(key.value) }
+    synchronized(AppStore.inventory) { AppStore.inventory.remove(key.value) }
+}
+
+/** Key de la ruta (/{key}) para BUSCAR un artículo existente: permisiva, solo exige que no esté vacía. */
+internal fun ApplicationCall.keyDeRuta(): ProductKey? =
+    parameters["key"]?.trim()?.takeIf { it.isNotEmpty() }?.let { ProductKey(it) }
 
 fun Route.articulosRoutes(
     dashboardGuard: DashboardGuard,
@@ -27,8 +65,12 @@ fun Route.articulosRoutes(
         val params = call.receiveParameters()
         val keyRaw = params["key"]?.trim() ?: ""
         val itemName = params["item"]?.trim() ?: ""
-        if (keyRaw.isBlank() || itemName.isBlank()) {
+        if (itemName.isBlank()) {
             call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Key e Item son obligatorios"))
+            return@post
+        }
+        ProductKey.validar(keyRaw)?.let {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to it))
             return@post
         }
         val key = ProductKey(keyRaw)
@@ -58,22 +100,7 @@ fun Route.articulosRoutes(
 
         try {
             val created = articuloService.crear(item, usuario = "dashboard")
-            synchronized(AppStore.products) {
-                AppStore.products[key.value] = com.automata.commerce.model.CommercialProduct(
-                    key = key,
-                    itemName = created.item,
-                    publishedPrice = created.precioPublicado ?: com.automata.shared.Money.of(0),
-                    minimumPrice = created.precioMinimo ?: com.automata.shared.Money.of(0),
-                    cost = created.precioCompra,
-                    status = created.estado.etiqueta,
-                    description = created.descripcion ?: "",
-                    brand = created.marca ?: "",
-                    condition = created.condicion ?: "",
-                    category = created.tipo ?: "",
-                    location = created.ubicacion,
-                    masterQuantity = created.cantidad
-                )
-            }
+            sincronizarProductoEnMemoria(created)
             call.respond(HttpStatusCode.Created, created)
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "Ya existe el producto")))
@@ -152,22 +179,7 @@ fun Route.articulosRoutes(
 
         try {
             val updated = articuloService.editar(itemToUpdate, usuario = "dashboard")
-            synchronized(AppStore.products) {
-                AppStore.products[key.value] = com.automata.commerce.model.CommercialProduct(
-                    key = key,
-                    itemName = updated.item,
-                    publishedPrice = updated.precioPublicado ?: com.automata.shared.Money.of(0),
-                    minimumPrice = updated.precioMinimo ?: com.automata.shared.Money.of(0),
-                    cost = updated.precioCompra,
-                    status = updated.estado.etiqueta,
-                    description = updated.descripcion ?: "",
-                    brand = updated.marca ?: "",
-                    condition = updated.condicion ?: "",
-                    category = updated.tipo ?: "",
-                    location = updated.ubicacion,
-                    masterQuantity = updated.cantidad
-                )
-            }
+            sincronizarProductoEnMemoria(updated)
             call.respond(HttpStatusCode.OK, updated)
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to (e.message ?: "Producto no encontrado")))
@@ -181,7 +193,10 @@ fun Route.articulosRoutes(
             call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Base de datos no configurada"))
             return@post
         }
-        val key = ProductKey(call.parameters["key"] ?: "")
+        val key = call.keyDeRuta() ?: run {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Key de producto requerida"))
+            return@post
+        }
         val params = call.receiveParameters()
         val motivo = params["motivo"]?.trim() ?: ""
         if (motivo.isBlank()) {
@@ -195,11 +210,7 @@ fun Route.articulosRoutes(
                 usuario = "dashboard",
                 reservationRepo = reservationRepo
             )
-            synchronized(AppStore.products) {
-                AppStore.products[key.value]?.let {
-                    AppStore.products[key.value] = it.copy(status = "Inactivo")
-                }
-            }
+            marcarEstadoEnMemoria(key, "Inactivo")
             call.respond(HttpStatusCode.OK, mapOf("status" to "archivado", "key" to key.value, "motivo" to motivo))
         } catch (e: IllegalStateException) {
             call.respond(HttpStatusCode.Conflict, mapOf("error" to (e.message ?: "No se pudo archivar")))
@@ -214,14 +225,13 @@ fun Route.articulosRoutes(
             call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Base de datos no configurada"))
             return@post
         }
-        val key = ProductKey(call.parameters["key"] ?: "")
+        val key = call.keyDeRuta() ?: run {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Key de producto requerida"))
+            return@post
+        }
         try {
             articuloService.restaurar(key, usuario = "dashboard")
-            synchronized(AppStore.products) {
-                AppStore.products[key.value]?.let {
-                    AppStore.products[key.value] = it.copy(status = "Publicado")
-                }
-            }
+            marcarEstadoEnMemoria(key, "Publicado")
             call.respond(HttpStatusCode.OK, mapOf("status" to "restaurado", "key" to key.value))
         } catch (e: IllegalArgumentException) {
             call.respond(HttpStatusCode.NotFound, mapOf("error" to (e.message ?: "Artículo no encontrado")))
@@ -234,12 +244,14 @@ fun Route.articulosRoutes(
             call.respond(HttpStatusCode.ServiceUnavailable, mapOf("error" to "Base de datos no configurada"))
             return@delete
         }
-        val key = ProductKey(call.parameters["key"] ?: "")
+        val key = call.keyDeRuta() ?: run {
+            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Key de producto requerida"))
+            return@delete
+        }
         try {
             val deleted = articuloService.eliminar(key, usuario = "dashboard")
             if (deleted) {
-                synchronized(AppStore.products) { AppStore.products.remove(key.value) }
-                synchronized(AppStore.inventory) { AppStore.inventory.remove(key.value) }
+                quitarDeMemoria(key)
                 call.respond(HttpStatusCode.OK, mapOf("status" to "eliminado", "key" to key.value))
             } else {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "No existe el artículo ${key.value}"))

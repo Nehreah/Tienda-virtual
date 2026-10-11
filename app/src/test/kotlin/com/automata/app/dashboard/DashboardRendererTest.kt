@@ -44,7 +44,10 @@ class DashboardRendererTest {
         )
 
         assertTrue(html.contains("/static/theme-init.js"))
-        assertTrue(html.contains("/static/htmx-lite.js"))
+        assertTrue(html.contains("/static/htmx.min.js"))
+        assertFalse(html.contains("htmx-lite"))
+        assertTrue(html.contains("name=\"htmx-config\""))
+        assertTrue(html.contains("\"allowEval\":false"))
         assertTrue(html.contains("/static/dashboard.js"))
         assertFalse(Regex("<script\\s*>" , RegexOption.IGNORE_CASE).containsMatchIn(html),
             "no deben quedar scripts inline en el HTML del dashboard")

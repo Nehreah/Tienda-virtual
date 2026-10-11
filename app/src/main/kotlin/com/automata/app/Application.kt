@@ -13,6 +13,7 @@ import com.automata.app.routes.*
 import com.automata.commerce.model.CommercialProduct
 import com.automata.commerce.model.OperationalInventory
 import com.automata.commerce.ports.InventarioRepository
+import com.automata.commerce.ports.LiquidacionRepository
 import com.automata.commerce.ports.InversionRepository
 import com.automata.commerce.ports.SocioRepository
 import com.automata.commerce.ports.VentaRepository
@@ -37,6 +38,7 @@ import com.automata.infra.db.ExposedConversationStore
 import com.automata.infra.db.ExposedImportacionesRepository
 import com.automata.infra.db.ExposedInventarioRepository
 import com.automata.infra.db.ExposedInversionRepository
+import com.automata.infra.db.ExposedLiquidacionRepository
 import com.automata.infra.db.ExposedProcessedEventStore
 import com.automata.infra.db.ExposedReservationRepository
 import com.automata.infra.db.ExposedReparacionRepository
@@ -476,6 +478,7 @@ fun Application.module() {
     val socioRepo: SocioRepository = if (AppStore.databaseConnected) ExposedSocioRepository() else InMemorySocioRepository()
     val inversionRepo: InversionRepository = if (AppStore.databaseConnected) ExposedInversionRepository() else InMemoryInversionRepository()
     val socioService = SocioService(socioRepo)
+    val liquidacionRepo: LiquidacionRepository? = if (AppStore.databaseConnected) ExposedLiquidacionRepository() else null
     val metricasService = MetricasService()
     val ventaRepo: VentaRepository = if (AppStore.databaseConnected) ExposedVentaRepository() else InMemoryVentaRepository()
 
@@ -484,13 +487,14 @@ fun Application.module() {
         dashboardRoutes(dashboardGuard, llmAdapter, negotiationEngine)
         excelRoutes(dashboardGuard, dbRepository, importacionesRepo, excelPreviewService, excelParser)
         articulosRoutes(dashboardGuard, articuloService, reservationRepo)
+        catalogoUiRoutes(dashboardGuard, articuloService, dbRepository, reservationRepo)
         reparacionesRoutes(dashboardGuard, dbRepository, reparacionRepo)
         reconciliacionRoutes(dashboardGuard, reconcileUseCase)
         eventosDerivaRoutes(dashboardGuard, unresolvedEventStore, stockDriftDetector)
         clientesRoutes(dashboardGuard, clienteService)
         pagosRoutes(dashboardGuard, confirmPaymentUseCase, inboundPipeline, antiOversellSaga, conversationStore)
         webhookRoutes(shopifyWebhookHandler, metaWebhookReceiver, processedEvents, dbRepository, antiOversellSaga, inboundPipeline, pipelineScope, inboundWorker)
-        sociosRoutes(dashboardGuard, socioService, socioRepo)
+        sociosRoutes(dashboardGuard, socioService, socioRepo, liquidacionRepo)
         inversionRoutes(dashboardGuard, inversionRepo, dbRepository ?: InMemoryInventarioRepository(), socioRepo)
         metricasRoutes(dashboardGuard, metricasService, dbRepository ?: InMemoryInventarioRepository(), ventaRepo, socioRepo)
         ventasRoutes(dashboardGuard)

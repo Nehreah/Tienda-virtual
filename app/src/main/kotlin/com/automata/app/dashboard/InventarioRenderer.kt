@@ -2,6 +2,7 @@ package com.automata.app.dashboard
 
 import com.automata.commerce.model.InventarioItem
 import com.automata.commerce.model.Socio
+import java.math.BigDecimal
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
 

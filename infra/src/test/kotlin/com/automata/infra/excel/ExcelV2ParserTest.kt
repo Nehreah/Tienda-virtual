@@ -105,6 +105,19 @@ class ExcelV2ParserTest {
     }
 
     @Test
+    fun `clave con caracteres que rompen rutas se rechaza con error en la columna Key`() {
+        val r = parse(xlsx(listOf(
+            listOf("PROD/001", "Con barra", "100000", "80000", "50000", "Publicado"),
+            listOf("PROD 002", "Con espacio", "100000", "80000", "50000", "Publicado"),
+            listOf("PROD-003", "Valido", "100000", "80000", "50000", "Publicado")
+        )))
+        assertEquals(1, r.products.size)
+        assertEquals("PROD-003", r.products[0].key.value)
+        assertEquals(2, r.rejectedRows)
+        assertTrue(r.errors.all { it.contains("columna 'Key'") })
+    }
+
+    @Test
     fun `clave duplicada conserva la primera fila y rechaza la repetida`() {
         val r = parse(xlsx(listOf(
             listOf("PROD-001", "Primero", "100000", "80000", "50000", "Publicado"),

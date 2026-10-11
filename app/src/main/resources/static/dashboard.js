@@ -33,13 +33,17 @@
             document.body.classList.remove('nav-open');
             window.scrollTo(0, 0);
         }
-        function loadModuleView(view) {
-            var config = {
-                socios: { url: '/api/socios', target: 'socios-panel' },
-                reparaciones: { url: '/ui/reparaciones', target: 'reparaciones-panel' },
-                catalogo: { url: '/api/inventario/tabla', target: 'inventario-inversion-panel' }
-            }[view];
-            if (!config) { return; }
+        /* Paneles que se cargan al abrir cada subpágina. Cada uno es un fragmento HTML del servidor. */
+        var MODULE_PANELS = {
+            socios: [{ url: '/api/socios', target: 'socios-panel' }],
+            reparaciones: [{ url: '/ui/reparaciones', target: 'reparaciones-panel' }],
+            catalogo: [
+                { url: '/ui/catalogo', target: 'catalogo-panel' },
+                { url: '/api/inventario/tabla', target: 'inventario-inversion-panel' }
+            ]
+        };
+
+        function loadPanel(config) {
             var target = document.getElementById(config.target);
             if (!target || target.getAttribute('data-loaded') === 'true') { return; }
             target.textContent = 'Cargando…';
@@ -48,8 +52,19 @@
                     if (!response.ok) { throw new Error('No se pudo cargar el módulo (' + response.status + ').'); }
                     return response.text();
                 })
-                .then(function (html) { target.innerHTML = html; target.setAttribute('data-loaded', 'true'); })
+                .then(function (html) {
+                    target.innerHTML = html;
+                    target.setAttribute('data-loaded', 'true');
+                    /* htmx oficial no ve los atributos hx-* de HTML insertado con innerHTML: hay que procesarlo. */
+                    if (window.htmx && typeof window.htmx.process === 'function') { window.htmx.process(target); }
+                })
                 .catch(function (error) { target.textContent = error.message || 'Error cargando el módulo.'; });
+        }
+
+        function loadModuleView(view) {
+            var panels = MODULE_PANELS[view];
+            if (!panels) { return; }
+            panels.forEach(loadPanel);
         }
         window.addEventListener('hashchange', function () { showView(); loadModuleView(currentView()); });
         showView();
@@ -99,10 +114,71 @@
             }
         });
 
-        /* ---------- CSRF para peticiones htmx ---------- */
+        /* ---------- htmx oficial: CSRF, errores y modales ---------- */
         var meta = document.querySelector('meta[name="csrf-token"]');
         var csrf = meta ? meta.getAttribute('content') : '';
         document.body.addEventListener('htmx:configRequest', function (e) {
             if (csrf) { e.detail.headers['X-CSRF-Token'] = csrf; }
+        });
+
+        function showToast(text) {
+            var msg = document.getElementById('dashboard-toast');
+            if (!msg) {
+                msg = document.createElement('div');
+                msg.id = 'dashboard-toast';
+                msg.className = 'ui-toast';
+                msg.setAttribute('role', 'status');
+                document.body.appendChild(msg);
+            }
+            msg.textContent = text;
+            msg.hidden = false;
+            clearTimeout(showToast.timer);
+            showToast.timer = setTimeout(function () { msg.hidden = true; }, 8000);
+        }
+
+        /* htmx NO intercambia respuestas 4xx por defecto. Nuestras rutas devuelven el panel con el mensaje de error
+           (400/409/422 en text/html): se dejan pasar para que el mensaje se vea dentro del panel. */
+        document.body.addEventListener('htmx:beforeSwap', function (e) {
+            var xhr = e.detail.xhr;
+            if (!xhr) { return; }
+            var st = xhr.status;
+            if (st >= 400 && st < 500 && st !== 401 && st !== 403 && st !== 429) {
+                var ct = (xhr.getResponseHeader('Content-Type') || '').toLowerCase();
+                if (ct.indexOf('text/html') === 0) { e.detail.shouldSwap = true; e.detail.isError = false; }
+            }
+        });
+        document.body.addEventListener('htmx:responseError', function (e) {
+            var xhr = e.detail.xhr;
+            var st = xhr ? xhr.status : 0;
+            var text = st === 401 ? 'Tu sesión expiró. Recarga la página.'
+                : st === 403 ? 'Solicitud rechazada por seguridad (origen no permitido).'
+                : st === 429 ? 'Demasiados intentos. Espera un momento.'
+                : 'No se pudo completar la solicitud (HTTP ' + st + ').';
+            showToast(text);
+        });
+        document.body.addEventListener('htmx:sendError', function () {
+            showToast('No hay conexión con el servidor.');
+        });
+        document.body.addEventListener('htmx:timeout', function () {
+            showToast('La solicitud tardó demasiado. Inténtalo otra vez.');
+        });
+
+        /* Modales: se cierran con [data-modal-close], con Escape o haciendo clic fuera del cuadro. */
+        function closeModals() {
+            document.querySelectorAll('.ui-modal-backdrop').forEach(function (m) { m.remove(); });
+        }
+        document.addEventListener('click', function (e) {
+            var t = e.target;
+            if (!t || !t.closest) { return; }
+            if (t.closest('[data-modal-close]')) { e.preventDefault(); closeModals(); return; }
+            if (t.classList && t.classList.contains('ui-modal-backdrop')) { closeModals(); return; }
+            var clear = t.closest('[data-clear]');
+            if (clear) {
+                var slot = document.querySelector(clear.getAttribute('data-clear'));
+                if (slot) { slot.innerHTML = ''; }
+            }
+        });
+        document.addEventListener('keydown', function (e) {
+            if (e.key === 'Escape') { closeModals(); }
         });
     })();
